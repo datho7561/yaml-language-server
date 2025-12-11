@@ -190,7 +190,9 @@ export class YAMLSchemaService extends JSONSchemaService {
     dependencies: SchemaDependencies
   ): Promise<ResolvedSchema> {
     const resolveErrors: string[] = schemaToResolve.errors.slice(0);
-    let schema: JSONSchema = schemaToResolve.schema;
+    // Deep clone the schema to prevent mutations from affecting the original schema object
+    // This ensures that cached schemas don't get mutated and affect subsequent resolutions
+    let schema: JSONSchema = JSON.parse(JSON.stringify(schemaToResolve.schema)) as JSONSchema;
     const contextService = this.contextService;
 
     const normalizedSchemaUri = this.normalizeId(schema.$schema);
@@ -321,24 +323,156 @@ export class YAMLSchemaService extends JSONSchemaService {
       return registry;
     };
 
-    const findSection = (schema: JSONSchema, path: string, anchorRegistry?: Map<string, JSONSchema>): JSONSchema => {
+    /**
+     * Builds a registry of all $recursiveAnchor values in a schema tree
+     * Recursive anchors are resolved statically (unlike dynamic anchors)
+     * Draft-07: $recursiveAnchor: true creates an anonymous recursive anchor
+     * 2019-09: $recursiveAnchor: "name" creates a named recursive anchor
+     */
+    const buildRecursiveAnchorRegistry = (
+      schema: JSONSchema,
+      baseURI: string,
+      registry: Map<string, JSONSchema> = new Map(),
+      visited: Set<JSONSchema> = new Set()
+    ): Map<string, JSONSchema> => {
+      if (!schema || typeof schema !== 'object' || visited.has(schema)) {
+        return registry;
+      }
+      visited.add(schema);
+
+      // Determine the base URI for this schema (use $id if present, otherwise inherit)
+      const schemaBaseURI = schema.$id ? this.normalizeId(schema.$id) : baseURI;
+
+      // Register $recursiveAnchor if present
+      if (schema.$recursiveAnchor !== undefined) {
+        if (typeof schema.$recursiveAnchor === 'boolean' && schema.$recursiveAnchor === true) {
+          // Draft-07: anonymous recursive anchor (referenced as "#")
+          const anchorKey = schemaBaseURI + '#';
+          registry.set(anchorKey, schema);
+          // Also register without base URI for same-document references
+          registry.set('#', schema);
+        } else if (typeof schema.$recursiveAnchor === 'string') {
+          // 2019-09: named recursive anchor
+          const anchorKey = schemaBaseURI + '#' + schema.$recursiveAnchor;
+          registry.set(anchorKey, schema);
+          // Also register without base URI for same-document references
+          registry.set('#' + schema.$recursiveAnchor, schema);
+        }
+      }
+
+      // Recursively traverse schema tree
+      const collectEntries = (...entries: JSONSchemaRef[]): void => {
+        for (const entry of entries) {
+          if (typeof entry === 'object' && entry !== null) {
+            buildRecursiveAnchorRegistry(entry as JSONSchema, schemaBaseURI, registry, visited);
+          }
+        }
+      };
+
+      const collectMapEntries = (...maps: JSONSchemaMap[]): void => {
+        for (const map of maps) {
+          if (typeof map === 'object' && map !== null) {
+            for (const key in map) {
+              const entry = map[key];
+              if (typeof entry === 'object' && entry !== null) {
+                buildRecursiveAnchorRegistry(entry as JSONSchema, schemaBaseURI, registry, visited);
+              }
+            }
+          }
+        }
+      };
+
+      const collectArrayEntries = (...arrays: JSONSchemaRef[][]): void => {
+        for (const array of arrays) {
+          if (Array.isArray(array)) {
+            for (const entry of array) {
+              if (typeof entry === 'object' && entry !== null) {
+                buildRecursiveAnchorRegistry(entry as JSONSchema, schemaBaseURI, registry, visited);
+              }
+            }
+          }
+        }
+      };
+
+      collectEntries(
+        <JSONSchema>schema.items,
+        schema.additionalItems,
+        <JSONSchema>schema.additionalProperties,
+        schema.not,
+        schema.contains,
+        schema.propertyNames,
+        schema.if,
+        schema.then,
+        schema.else,
+        schema.unevaluatedItems,
+        schema.unevaluatedProperties
+      );
+
+      collectMapEntries(
+        schema.definitions,
+        schema.$defs,
+        schema.properties,
+        schema.patternProperties,
+        <JSONSchemaMap>schema.dependencies
+      );
+
+      collectArrayEntries(
+        schema.anyOf,
+        schema.allOf,
+        schema.oneOf,
+        <JSONSchemaRef[]>schema.items,
+        schema.prefixItems,
+        schema.schemaSequence
+      );
+
+      return registry;
+    };
+
+    const findSection = (
+      schema: JSONSchema,
+      path: string,
+      anchorRegistry?: Map<string, JSONSchema>,
+      recursiveAnchorRegistry?: Map<string, JSONSchema>
+    ): JSONSchema => {
       if (!path) {
         return schema;
       }
 
       // Check if path is an anchor reference (doesn't start with '/')
-      if (path[0] !== '/' && anchorRegistry) {
-        // Try to resolve as anchor reference
-        // First try with full URI + anchor
+      if (path[0] !== '/') {
         const schemaURI = schema.url || schema.$id || '';
-        const fullAnchorKey = schemaURI + '#' + path;
-        if (anchorRegistry.has(fullAnchorKey)) {
-          return anchorRegistry.get(fullAnchorKey);
+
+        // First try recursive anchor registry (for $recursiveRef)
+        if (recursiveAnchorRegistry) {
+          // Try with full URI + anchor
+          const fullRecursiveAnchorKey = schemaURI + '#' + path;
+          if (recursiveAnchorRegistry.has(fullRecursiveAnchorKey)) {
+            return recursiveAnchorRegistry.get(fullRecursiveAnchorKey);
+          }
+          // Try with just #anchor (same-document reference)
+          const recursiveAnchorKey = '#' + path;
+          if (recursiveAnchorRegistry.has(recursiveAnchorKey)) {
+            return recursiveAnchorRegistry.get(recursiveAnchorKey);
+          }
+          // For Draft-07 anonymous recursive anchor, try "#"
+          if (path === '' && recursiveAnchorRegistry.has('#')) {
+            return recursiveAnchorRegistry.get('#');
+          }
         }
-        // Then try with just #anchor (same-document reference)
-        const anchorKey = '#' + path;
-        if (anchorRegistry.has(anchorKey)) {
-          return anchorRegistry.get(anchorKey);
+
+        // Then try regular anchor registry (for $ref with $anchor)
+        if (anchorRegistry) {
+          // Try to resolve as anchor reference
+          // First try with full URI + anchor
+          const fullAnchorKey = schemaURI + '#' + path;
+          if (anchorRegistry.has(fullAnchorKey)) {
+            return anchorRegistry.get(fullAnchorKey);
+          }
+          // Then try with just #anchor (same-document reference)
+          const anchorKey = '#' + path;
+          if (anchorRegistry.has(anchorKey)) {
+            return anchorRegistry.get(anchorKey);
+          }
         }
       }
 
@@ -361,9 +495,10 @@ export class YAMLSchemaService extends JSONSchemaService {
       sourceRoot: JSONSchema,
       sourceURI: string,
       path: string,
-      anchorRegistry?: Map<string, JSONSchema>
+      anchorRegistry?: Map<string, JSONSchema>,
+      recursiveAnchorRegistry?: Map<string, JSONSchema>
     ): void => {
-      const section = findSection(sourceRoot, path, anchorRegistry);
+      const section = findSection(sourceRoot, path, anchorRegistry, recursiveAnchorRegistry);
       if (section) {
         for (const key in section) {
           if (Object.prototype.hasOwnProperty.call(section, key) && !Object.prototype.hasOwnProperty.call(target, key)) {
@@ -381,7 +516,8 @@ export class YAMLSchemaService extends JSONSchemaService {
       linkPath: string,
       parentSchemaURL: string,
       parentSchemaDependencies: SchemaDependencies,
-      anchorRegistry?: Map<string, JSONSchema>
+      anchorRegistry?: Map<string, JSONSchema>,
+      recursiveAnchorRegistry?: Map<string, JSONSchema>
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
     ): Promise<any> => {
       if (contextService && !/^\w+:\/\/.*/.test(uri)) {
@@ -397,16 +533,37 @@ export class YAMLSchemaService extends JSONSchemaService {
         }
         // Build anchor registry for the external schema
         const externalRegistry = buildAnchorRegistry(unresolvedSchema.schema, uri);
-        // Merge external registry into main registry
+        // Build recursive anchor registry for the external schema
+        const externalRecursiveRegistry = buildRecursiveAnchorRegistry(unresolvedSchema.schema, uri);
+        // Merge external registries into main registries
         if (anchorRegistry) {
           externalRegistry.forEach((value, key) => {
             anchorRegistry.set(key, value);
           });
         }
-        merge(node, unresolvedSchema.schema, uri, linkPath, anchorRegistry || externalRegistry);
+        if (recursiveAnchorRegistry) {
+          externalRecursiveRegistry.forEach((value, key) => {
+            recursiveAnchorRegistry.set(key, value);
+          });
+        }
+        merge(
+          node,
+          unresolvedSchema.schema,
+          uri,
+          linkPath,
+          anchorRegistry || externalRegistry,
+          recursiveAnchorRegistry || externalRecursiveRegistry
+        );
         node.url = uri;
         // eslint-disable-next-line @typescript-eslint/no-use-before-define
-        return resolveRefs(node, unresolvedSchema.schema, uri, referencedHandle.dependencies, anchorRegistry || externalRegistry);
+        return resolveRefs(
+          node,
+          unresolvedSchema.schema,
+          uri,
+          referencedHandle.dependencies,
+          anchorRegistry || externalRegistry,
+          recursiveAnchorRegistry || externalRecursiveRegistry
+        );
       });
     };
 
@@ -415,7 +572,8 @@ export class YAMLSchemaService extends JSONSchemaService {
       parentSchema: JSONSchema,
       parentSchemaURL: string,
       parentSchemaDependencies: SchemaDependencies,
-      anchorRegistry?: Map<string, JSONSchema>
+      anchorRegistry?: Map<string, JSONSchema>,
+      recursiveAnchorRegistry?: Map<string, JSONSchema>
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
     ): Promise<any> => {
       if (!node || typeof node !== 'object') {
@@ -424,9 +582,14 @@ export class YAMLSchemaService extends JSONSchemaService {
 
       // Build anchor registry if not provided
       const registry = anchorRegistry || buildAnchorRegistry(parentSchema, parentSchemaURL);
+      // Build recursive anchor registry if not provided
+      const recursiveRegistry = recursiveAnchorRegistry || buildRecursiveAnchorRegistry(parentSchema, parentSchemaURL);
 
       const toWalk: JSONSchema[] = [node];
       const seen: Set<JSONSchema> = new Set();
+      // Track which schema objects have had their $recursiveRef processed to prevent infinite recursion
+      // Format: schema object reference -> Set of processed $recursiveRef values
+      const processedRecursiveRefs = new Map<JSONSchema, Set<string>>();
 
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       const openPromises: Promise<any>[] = [];
@@ -472,12 +635,99 @@ export class YAMLSchemaService extends JSONSchemaService {
           delete next.$ref;
           if (segments[0].length > 0) {
             openPromises.push(
-              resolveExternalLink(next, segments[0], segments[1], parentSchemaURL, parentSchemaDependencies, registry)
+              resolveExternalLink(
+                next,
+                segments[0],
+                segments[1],
+                parentSchemaURL,
+                parentSchemaDependencies,
+                registry,
+                recursiveRegistry
+              )
             );
             return;
           } else {
             if (!seenRefs.has(ref)) {
-              merge(next, parentSchema, parentSchemaURL, segments[1], registry); // can set next.$ref again, use seenRefs to avoid circle
+              merge(next, parentSchema, parentSchemaURL, segments[1], registry, recursiveRegistry); // can set next.$ref again, use seenRefs to avoid circle
+              seenRefs.add(ref);
+            }
+          }
+        }
+        // Handle $recursiveRef (recursive reference) - resolves statically to nearest $recursiveAnchor
+        if (next.$recursiveRef) {
+          const ref = decodeURIComponent(next.$recursiveRef);
+          const segments = ref.split('#', 2);
+          next._$ref = next.$recursiveRef;
+          delete next.$recursiveRef;
+          if (segments[0].length > 0) {
+            openPromises.push(
+              resolveExternalLink(
+                next,
+                segments[0],
+                segments[1],
+                parentSchemaURL,
+                parentSchemaDependencies,
+                registry,
+                recursiveRegistry
+              )
+            );
+            return;
+          } else {
+            // Track processed $recursiveRef per schema object to prevent infinite recursion
+            // Each schema object can have its $recursiveRef processed once
+            // Different schema objects can process the same $recursiveRef value
+            if (!seenRefs.has(ref)) {
+              const processedRefs = processedRecursiveRefs.get(next) || new Set<string>();
+              if (!processedRefs.has(ref)) {
+                processedRefs.add(ref);
+                processedRecursiveRefs.set(next, processedRefs);
+                // For $recursiveRef, use recursive anchor registry to find the schema with matching $recursiveAnchor
+                const recursiveAnchorPath = segments[1] || '';
+                const recursiveSchema = findSection(parentSchema, recursiveAnchorPath, registry, recursiveRegistry);
+                if (recursiveSchema) {
+                  // Merge the recursive anchor schema into the current schema
+                  for (const key in recursiveSchema) {
+                    if (
+                      Object.prototype.hasOwnProperty.call(recursiveSchema, key) &&
+                      !Object.prototype.hasOwnProperty.call(next, key)
+                    ) {
+                      next[key] = recursiveSchema[key];
+                    }
+                  }
+                  // Collect nested references from merged properties immediately
+                  // This ensures nested $recursiveRef and other references are processed
+                  collectEntries(
+                    <JSONSchema>next.items,
+                    next.additionalItems,
+                    <JSONSchema>next.additionalProperties,
+                    next.not,
+                    next.contains,
+                    next.propertyNames,
+                    next.if,
+                    next.then,
+                    next.else,
+                    next.unevaluatedItems,
+                    next.unevaluatedProperties
+                  );
+                  collectMapEntries(
+                    next.definitions,
+                    next.$defs,
+                    next.properties,
+                    next.patternProperties,
+                    <JSONSchemaMap>next.dependencies
+                  );
+                  collectArrayEntries(
+                    next.anyOf,
+                    next.allOf,
+                    next.oneOf,
+                    <JSONSchema[]>next.items,
+                    next.prefixItems,
+                    next.schemaSequence
+                  );
+                } else {
+                  resolveErrors.push(l10n.t('json.schema.invalidref', ref, parentSchemaURL));
+                }
+              }
               seenRefs.add(ref);
             }
           }
@@ -490,12 +740,20 @@ export class YAMLSchemaService extends JSONSchemaService {
           delete next.$dynamicRef;
           if (segments[0].length > 0) {
             openPromises.push(
-              resolveExternalLink(next, segments[0], segments[1], parentSchemaURL, parentSchemaDependencies, registry)
+              resolveExternalLink(
+                next,
+                segments[0],
+                segments[1],
+                parentSchemaURL,
+                parentSchemaDependencies,
+                registry,
+                recursiveRegistry
+              )
             );
             return;
           } else {
             if (!seenRefs.has(ref)) {
-              merge(next, parentSchema, parentSchemaURL, segments[1], registry);
+              merge(next, parentSchema, parentSchemaURL, segments[1], registry, recursiveRegistry);
               seenRefs.add(ref);
             }
           }
@@ -529,7 +787,15 @@ export class YAMLSchemaService extends JSONSchemaService {
         const segments = parentSchemaURL.split('#', 2);
         if (segments[0].length > 0 && segments[1].length > 0) {
           const newSchema = {};
-          await resolveExternalLink(newSchema, segments[0], segments[1], parentSchemaURL, parentSchemaDependencies, registry);
+          await resolveExternalLink(
+            newSchema,
+            segments[0],
+            segments[1],
+            parentSchemaURL,
+            parentSchemaDependencies,
+            registry,
+            recursiveRegistry
+          );
           for (const key in schema) {
             if (key === 'required') {
               continue;
@@ -554,6 +820,53 @@ export class YAMLSchemaService extends JSONSchemaService {
     };
 
     await resolveRefs(schema, schema, schemaURL, dependencies);
+
+    // Merge allOf entries into the root schema after resolution
+    // allOf means "all schemas in this array must be valid", which in practice means merging them
+    // However, we should only merge when:
+    // 1. The root schema has other properties (not just allOf) - indicating it's a single schema with allOf
+    // 2. The allOf entries reference $defs within the same schema (via $ref starting with #/$defs)
+    // We should NOT merge when allOf contains separate schemas from different sources (combined schemas)
+    if (
+      schema.allOf &&
+      Array.isArray(schema.allOf) &&
+      Object.keys(schema).length > 1 // Root schema has properties beyond just allOf
+    ) {
+      for (const allOfItem of schema.allOf) {
+        if (typeof allOfItem === 'object' && allOfItem !== null) {
+          const allOfSchema = allOfItem as JSONSchema;
+          // Only merge if the allOf entry has been resolved (no $ref, only _$ref if any)
+          // AND it references $defs within the same schema (indicated by _$ref starting with #/$defs)
+          const shouldMerge =
+            !allOfSchema.$ref && (allOfSchema._$ref?.startsWith('#/$defs') || allOfSchema._$ref?.startsWith('#/definitions'));
+          if (shouldMerge) {
+            // Merge properties from allOf entry into root schema
+            // Exclude schema identification properties that should not be merged
+            const excludeKeys = ['$ref', '_$ref', 'url', '$id', '$schema'];
+            for (const key in allOfSchema) {
+              if (
+                Object.prototype.hasOwnProperty.call(allOfSchema, key) &&
+                !Object.prototype.hasOwnProperty.call(schema, key) &&
+                !excludeKeys.includes(key)
+              ) {
+                schema[key] = allOfSchema[key];
+              }
+            }
+            // Merge properties object if both exist
+            if (allOfSchema.properties && schema.properties) {
+              for (const propKey in allOfSchema.properties) {
+                if (!Object.prototype.hasOwnProperty.call(schema.properties, propKey)) {
+                  schema.properties[propKey] = allOfSchema.properties[propKey];
+                }
+              }
+            } else if (allOfSchema.properties && !schema.properties) {
+              schema.properties = allOfSchema.properties;
+            }
+          }
+        }
+      }
+    }
+
     return new ResolvedSchema(schema, resolveErrors);
   }
 
@@ -950,7 +1263,30 @@ export class YAMLSchemaService extends JSONSchemaService {
   }
 
   onResourceChange(uri: string): boolean {
-    return super.onResourceChange(uri);
+    const normalizedUri = this.normalizeId(uri);
+    const result = super.onResourceChange(normalizedUri);
+
+    // Clear the cache for this schema URI to ensure anchor registries are rebuilt
+    // Anchor registries are built fresh during schema resolution, so clearing
+    // the cache forces them to be rebuilt with the latest schema content
+    if (this.schemasById && this.schemasById[normalizedUri]) {
+      delete this.schemasById[normalizedUri];
+    }
+
+    // Also clear any schemas that might reference this schema via anchors
+    // This ensures that when a schema changes, dependent schemas also get
+    // their anchor registries rebuilt
+    if (this.schemasById) {
+      for (const schemaId in this.schemasById) {
+        const handle = this.schemasById[schemaId];
+        if (handle && handle.dependencies && handle.dependencies[normalizedUri]) {
+          // This schema depends on the changed schema, clear its cache too
+          delete this.schemasById[schemaId];
+        }
+      }
+    }
+
+    return result;
   }
 }
 

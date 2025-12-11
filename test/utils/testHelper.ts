@@ -64,9 +64,9 @@ export function setupLanguageService(languageSettings: LanguageSettings): TestLa
   const yamlSettings = new SettingsState();
   process.argv.push('--node-ipc');
   const connection = createConnection();
+  const schemaProvider = new TestCustomSchemaProvider();
   const schemaRequestHandlerWrapper = (connection: Connection, uri: string): Promise<string> => {
-    const testSchemaProvider = TestCustomSchemaProvider.instance();
-    const testSchema = testSchemaProvider.getContentForSchema(uri);
+    const testSchema = schemaProvider.getContentForSchema(uri);
     if (testSchema) {
       return Promise.resolve(testSchema);
     }
@@ -97,8 +97,14 @@ export function setupLanguageService(languageSettings: LanguageSettings): TestLa
   const validationHandler = serverInit.validationHandler;
   const languageHandler = serverInit.languageHandler;
   languageService.configure(languageSettings);
-  const schemaProvider = TestCustomSchemaProvider.instance();
-  languageService.registerCustomSchemaProvider(schemaItSelfCustomSchemaProvider);
+  // Create a custom schema provider function that uses the same instance
+  const customSchemaProvider = (uri: string): Promise<string | string[]> => {
+    if (schemaProvider.has(uri)) {
+      return Promise.resolve(schemaProvider.getSchemas(uri));
+    }
+    return Promise.resolve(undefined);
+  };
+  languageService.registerCustomSchemaProvider(customSchemaProvider);
   return {
     languageService,
     validationHandler,
@@ -135,18 +141,6 @@ export function caretPosition(content: string): { position: number; content: str
  */
 export class TestCustomSchemaProvider {
   private schemas: Array<[string, string, JSONSchema]> = new Array(0);
-  private static self: TestCustomSchemaProvider;
-
-  private constructor() {
-    // use instance only
-  }
-
-  public static instance(): TestCustomSchemaProvider {
-    if (!TestCustomSchemaProvider.self) {
-      TestCustomSchemaProvider.self = new TestCustomSchemaProvider();
-    }
-    return TestCustomSchemaProvider.self;
-  }
 
   /**
    * Adds a schema to the list of custom schemas.
@@ -164,7 +158,9 @@ export class TestCustomSchemaProvider {
    * @param schema The JSON schema object.
    */
   public addSchemaWithUri(doc: string, uri: string, schema: JSONSchema): void {
-    const item: [string, string, JSONSchema] = [doc, uri, schema];
+    // Deep clone the schema to prevent mutations during resolution from affecting the stored schema
+    const clonedSchema = JSON.parse(JSON.stringify(schema)) as JSONSchema;
+    const item: [string, string, JSONSchema] = [doc, uri, clonedSchema];
     this.schemas.push(item);
   }
 
@@ -220,12 +216,4 @@ export class TestCustomSchemaProvider {
     }
     return JSON.stringify(this.schemas[item][2]);
   }
-}
-
-export async function schemaItSelfCustomSchemaProvider(uri: string): Promise<string | string[]> {
-  const schemaProvider = TestCustomSchemaProvider.instance();
-  if (schemaProvider.has(uri)) {
-    return schemaProvider.getSchemas(uri);
-  }
-  return undefined;
 }

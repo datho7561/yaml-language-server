@@ -70,6 +70,8 @@ describe('Validation Tests', () => {
   }
 
   afterEach(() => {
+    // Clear the schema cache BEFORE deleting to ensure proper cleanup
+    languageService.resetSchema(`file:///${SCHEMA_ID}`);
     schemaProvider.deleteSchema(SCHEMA_ID);
   });
 
@@ -2651,14 +2653,189 @@ obj:
       assert.equal(
         1,
         result.length,
-        `Expected exactly 1 error for invalid anchor reference, got ${result.length}. Errors: ${JSON.stringify(result.map((r) => r.message))}`
+        `Expected exactly 1 error, got ${result.length}. Errors: ${JSON.stringify(result.map((r) => r.message))}`
       );
-      // Should have an error about invalid reference
-      assert.ok(
-        result[0].message.includes('nonexistentAnchor') || result[0].message.includes('invalid'),
-        `Expected invalid reference error, got: ${result[0].message}`
-      );
+      assert.equal(result[0].message, "$ref 'nonexistentAnchor' in 'file:///default_schema_id.yaml' can not be resolved.");
       assert.equal(result[0].severity, DiagnosticSeverity.Error);
+    });
+
+    describe('$recursiveRef and $recursiveAnchor support', () => {
+      it('draft-07 schema with $recursiveAnchor and $recursiveRef', async () => {
+        const schema: JSONSchema = {
+          $schema: 'http://json-schema.org/draft-07/schema',
+          type: 'object',
+          $recursiveAnchor: true,
+          properties: {
+            name: { type: 'string' },
+            children: {
+              type: 'array',
+              items: { $recursiveRef: '#' },
+            },
+          },
+        };
+        schemaProvider.addSchema(SCHEMA_ID, schema);
+        const content = `name: "parent"
+children:
+  - name: "child1"
+    children: []
+  - name: "child2"`;
+        const result = await parseSetup(content);
+        assert.equal(
+          result.length,
+          0,
+          `Expected no errors, got ${result.length}. Errors: ${JSON.stringify(result.map((r) => r.message))}`
+        );
+      });
+
+      it('draft-2019-09 schema with named $recursiveAnchor and $recursiveRef', async () => {
+        const schema: JSONSchema = {
+          $schema: 'https://json-schema.org/draft/2019-09/schema',
+          type: 'object',
+          $defs: {
+            TreeNode: {
+              $recursiveAnchor: 'tree',
+              type: 'object',
+              properties: {
+                name: { type: 'string' },
+                children: {
+                  type: 'array',
+                  items: { $recursiveRef: '#tree' },
+                },
+              },
+            },
+          },
+          allOf: [{ $ref: '#/$defs/TreeNode' }],
+        };
+        schemaProvider.addSchema(SCHEMA_ID, schema);
+        const content = `name: "parent"
+children:
+  - name: "child1"
+    children: []
+  - name: "child2"`;
+        const result = await parseSetup(content);
+        assert.equal(
+          result.length,
+          0,
+          `Expected no errors, got ${result.length}. Errors: ${JSON.stringify(result.map((r) => r.message))}`
+        );
+      });
+
+      it('draft-07 schema with $recursiveRef validation error', async () => {
+        const schema: JSONSchema = {
+          $schema: 'http://json-schema.org/draft-07/schema',
+          type: 'object',
+          $recursiveAnchor: true,
+          properties: {
+            name: { type: 'string' },
+            children: {
+              type: 'array',
+              items: { $recursiveRef: '#' },
+            },
+          },
+        };
+        schemaProvider.addSchema(SCHEMA_ID, schema);
+        const content = `name: 123
+children: []`;
+        const result = await parseSetup(content);
+        assert.equal(
+          1,
+          result.length,
+          `Expected exactly 1 error, got ${result.length}. Errors: ${JSON.stringify(result.map((r) => r.message))}`
+        );
+        assert.equal('Incorrect type. Expected "string".', result[0].message);
+        assert.equal(result[0].severity, DiagnosticSeverity.Error);
+      });
+
+      it('draft-2019-09 schema with $recursiveRef in $defs', async () => {
+        const schema: JSONSchema = {
+          $schema: 'https://json-schema.org/draft/2019-09/schema',
+          type: 'object',
+          $defs: {
+            TreeNode: {
+              $recursiveAnchor: 'node',
+              type: 'object',
+              properties: {
+                value: { type: 'string' },
+                children: {
+                  type: 'array',
+                  items: { $recursiveRef: '#node' },
+                },
+              },
+            },
+          },
+          allOf: [{ $ref: '#/$defs/TreeNode' }],
+        };
+        schemaProvider.addSchema(SCHEMA_ID, schema);
+        const content = `value: "root"
+children:
+  - value: "child1"
+    children: []
+  - value: "child2"
+    children:
+      - value: "grandchild"`;
+        const result = await parseSetup(content);
+        assert.equal(
+          result.length,
+          0,
+          `Expected no errors, got ${result.length}. Errors: ${JSON.stringify(result.map((r) => r.message))}`
+        );
+      });
+
+      it('draft-2019-09 schema with invalid $recursiveRef', async () => {
+        const schema: JSONSchema = {
+          $schema: 'https://json-schema.org/draft/2019-09/schema',
+          type: 'object',
+          properties: {
+            foo: { $recursiveRef: '#nonexistent' },
+          },
+        };
+        schemaProvider.addSchema(SCHEMA_ID, schema);
+        const content = `foo: "bar"`;
+        const result = await parseSetup(content);
+        assert.equal(
+          1,
+          result.length,
+          `Expected exactly 1 error, got ${result.length}. Errors: ${JSON.stringify(result.map((r) => r.message))}`
+        );
+        assert.equal(result[0].message, "$ref '#nonexistent' in 'file:///default_schema_id.yaml' can not be resolved.");
+        assert.equal(result[0].severity, DiagnosticSeverity.Error);
+      });
+
+      it('draft-07 schema with $recursiveRef to external schema', async () => {
+        const externalSchema: JSONSchema = {
+          $schema: 'http://json-schema.org/draft-07/schema',
+          $id: 'http://example.com/tree',
+          $recursiveAnchor: true,
+          type: 'object',
+          properties: {
+            name: { type: 'string' },
+            children: {
+              type: 'array',
+              items: { $recursiveRef: '#' },
+            },
+          },
+        };
+        const mainSchema: JSONSchema = {
+          $schema: 'http://json-schema.org/draft-07/schema',
+          type: 'object',
+          properties: {
+            tree: { $recursiveRef: 'http://example.com/tree#' },
+          },
+        };
+        // Register external schema first with proper URI
+        schemaProvider.addSchemaWithUri('tree', 'http://example.com/tree', externalSchema);
+        schemaProvider.addSchema(SCHEMA_ID, mainSchema);
+        const content = `tree:
+  name: "root"
+  children:
+    - name: "child"`;
+        const result = await parseSetup(content);
+        assert.equal(
+          result.length,
+          0,
+          `Expected no errors, got ${result.length}. Errors: ${JSON.stringify(result.map((r) => r.message))}`
+        );
+      });
     });
   });
 });

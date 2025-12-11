@@ -74,6 +74,10 @@ export interface JSONSchema {
   $dynamicAnchor?: string; // Named anchor for dynamic reference
   $dynamicRef?: string; // Dynamic reference
 
+  // schema draft-07 and 2019-09 (deprecated in 2020-12, replaced by $dynamicAnchor/$dynamicRef)
+  $recursiveAnchor?: string | boolean; // Recursive anchor (Draft-07: boolean, 2019-09: string)
+  $recursiveRef?: string; // Recursive reference (resolves statically to nearest $recursiveAnchor)
+
   // VSCode extensions
 
   defaultSnippets?: {
