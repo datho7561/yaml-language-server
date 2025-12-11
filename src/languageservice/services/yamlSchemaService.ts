@@ -227,24 +227,143 @@ export class YAMLSchemaService extends JSONSchemaService {
       resolveErrors.push(`Schema '${getSchemaTitle(schemaToResolve.schema, schemaURL)}' is not valid:\n${errs.join('\n')}`);
     }
 
-    const findSection = (schema: JSONSchema, path: string): JSONSchema => {
+    /**
+     * Builds a registry of all $anchor values in a schema tree
+     * Anchors are scoped to their containing schema's base URI (from $id)
+     */
+    const buildAnchorRegistry = (
+      schema: JSONSchema,
+      baseURI: string,
+      registry: Map<string, JSONSchema> = new Map(),
+      visited: Set<JSONSchema> = new Set()
+    ): Map<string, JSONSchema> => {
+      if (!schema || typeof schema !== 'object' || visited.has(schema)) {
+        return registry;
+      }
+      visited.add(schema);
+
+      // Determine the base URI for this schema (use $id if present, otherwise inherit)
+      const schemaBaseURI = schema.$id ? this.normalizeId(schema.$id) : baseURI;
+
+      // Register $anchor if present
+      if (schema.$anchor && typeof schema.$anchor === 'string') {
+        const anchorKey = schemaBaseURI + '#' + schema.$anchor;
+        registry.set(anchorKey, schema);
+        // Also register without base URI for same-document references
+        registry.set('#' + schema.$anchor, schema);
+      }
+
+      // Recursively traverse schema tree
+      const collectEntries = (...entries: JSONSchemaRef[]): void => {
+        for (const entry of entries) {
+          if (typeof entry === 'object' && entry !== null) {
+            buildAnchorRegistry(entry as JSONSchema, schemaBaseURI, registry, visited);
+          }
+        }
+      };
+
+      const collectMapEntries = (...maps: JSONSchemaMap[]): void => {
+        for (const map of maps) {
+          if (typeof map === 'object' && map !== null) {
+            for (const key in map) {
+              const entry = map[key];
+              if (typeof entry === 'object' && entry !== null) {
+                buildAnchorRegistry(entry as JSONSchema, schemaBaseURI, registry, visited);
+              }
+            }
+          }
+        }
+      };
+
+      const collectArrayEntries = (...arrays: JSONSchemaRef[][]): void => {
+        for (const array of arrays) {
+          if (Array.isArray(array)) {
+            for (const entry of array) {
+              if (typeof entry === 'object' && entry !== null) {
+                buildAnchorRegistry(entry as JSONSchema, schemaBaseURI, registry, visited);
+              }
+            }
+          }
+        }
+      };
+
+      collectEntries(
+        <JSONSchema>schema.items,
+        schema.additionalItems,
+        <JSONSchema>schema.additionalProperties,
+        schema.not,
+        schema.contains,
+        schema.propertyNames,
+        schema.if,
+        schema.then,
+        schema.else,
+        schema.unevaluatedItems,
+        schema.unevaluatedProperties
+      );
+
+      collectMapEntries(
+        schema.definitions,
+        schema.$defs,
+        schema.properties,
+        schema.patternProperties,
+        <JSONSchemaMap>schema.dependencies
+      );
+
+      collectArrayEntries(
+        schema.anyOf,
+        schema.allOf,
+        schema.oneOf,
+        <JSONSchemaRef[]>schema.items,
+        schema.prefixItems,
+        schema.schemaSequence
+      );
+
+      return registry;
+    };
+
+    const findSection = (schema: JSONSchema, path: string, anchorRegistry?: Map<string, JSONSchema>): JSONSchema => {
       if (!path) {
         return schema;
       }
+
+      // Check if path is an anchor reference (doesn't start with '/')
+      if (path[0] !== '/' && anchorRegistry) {
+        // Try to resolve as anchor reference
+        // First try with full URI + anchor
+        const schemaURI = schema.url || schema.$id || '';
+        const fullAnchorKey = schemaURI + '#' + path;
+        if (anchorRegistry.has(fullAnchorKey)) {
+          return anchorRegistry.get(fullAnchorKey);
+        }
+        // Then try with just #anchor (same-document reference)
+        const anchorKey = '#' + path;
+        if (anchorRegistry.has(anchorKey)) {
+          return anchorRegistry.get(anchorKey);
+        }
+      }
+
+      // Fall back to JSON pointer resolution
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       let current: any = schema;
-      if (path[0] === '/') {
-        path = path.substr(1);
+      let jsonPointerPath = path;
+      if (jsonPointerPath[0] === '/') {
+        jsonPointerPath = jsonPointerPath.substr(1);
       }
-      path.split('/').some((part) => {
+      jsonPointerPath.split('/').some((part) => {
         current = current[part];
         return !current;
       });
       return current;
     };
 
-    const merge = (target: JSONSchema, sourceRoot: JSONSchema, sourceURI: string, path: string): void => {
-      const section = findSection(sourceRoot, path);
+    const merge = (
+      target: JSONSchema,
+      sourceRoot: JSONSchema,
+      sourceURI: string,
+      path: string,
+      anchorRegistry?: Map<string, JSONSchema>
+    ): void => {
+      const section = findSection(sourceRoot, path, anchorRegistry);
       if (section) {
         for (const key in section) {
           if (Object.prototype.hasOwnProperty.call(section, key) && !Object.prototype.hasOwnProperty.call(target, key)) {
@@ -261,7 +380,8 @@ export class YAMLSchemaService extends JSONSchemaService {
       uri: string,
       linkPath: string,
       parentSchemaURL: string,
-      parentSchemaDependencies: SchemaDependencies
+      parentSchemaDependencies: SchemaDependencies,
+      anchorRegistry?: Map<string, JSONSchema>
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
     ): Promise<any> => {
       if (contextService && !/^\w+:\/\/.*/.test(uri)) {
@@ -275,10 +395,18 @@ export class YAMLSchemaService extends JSONSchemaService {
           const loc = linkPath ? uri + '#' + linkPath : uri;
           resolveErrors.push(l10n.t('json.schema.problemloadingref', loc, unresolvedSchema.errors[0]));
         }
-        merge(node, unresolvedSchema.schema, uri, linkPath);
+        // Build anchor registry for the external schema
+        const externalRegistry = buildAnchorRegistry(unresolvedSchema.schema, uri);
+        // Merge external registry into main registry
+        if (anchorRegistry) {
+          externalRegistry.forEach((value, key) => {
+            anchorRegistry.set(key, value);
+          });
+        }
+        merge(node, unresolvedSchema.schema, uri, linkPath, anchorRegistry || externalRegistry);
         node.url = uri;
         // eslint-disable-next-line @typescript-eslint/no-use-before-define
-        return resolveRefs(node, unresolvedSchema.schema, uri, referencedHandle.dependencies);
+        return resolveRefs(node, unresolvedSchema.schema, uri, referencedHandle.dependencies, anchorRegistry || externalRegistry);
       });
     };
 
@@ -286,12 +414,16 @@ export class YAMLSchemaService extends JSONSchemaService {
       node: JSONSchema,
       parentSchema: JSONSchema,
       parentSchemaURL: string,
-      parentSchemaDependencies: SchemaDependencies
+      parentSchemaDependencies: SchemaDependencies,
+      anchorRegistry?: Map<string, JSONSchema>
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
     ): Promise<any> => {
       if (!node || typeof node !== 'object') {
         return null;
       }
+
+      // Build anchor registry if not provided
+      const registry = anchorRegistry || buildAnchorRegistry(parentSchema, parentSchemaURL);
 
       const toWalk: JSONSchema[] = [node];
       const seen: Set<JSONSchema> = new Set();
@@ -339,11 +471,13 @@ export class YAMLSchemaService extends JSONSchemaService {
           next._$ref = next.$ref;
           delete next.$ref;
           if (segments[0].length > 0) {
-            openPromises.push(resolveExternalLink(next, segments[0], segments[1], parentSchemaURL, parentSchemaDependencies));
+            openPromises.push(
+              resolveExternalLink(next, segments[0], segments[1], parentSchemaURL, parentSchemaDependencies, registry)
+            );
             return;
           } else {
             if (!seenRefs.has(ref)) {
-              merge(next, parentSchema, parentSchemaURL, segments[1]); // can set next.$ref again, use seenRefs to avoid circle
+              merge(next, parentSchema, parentSchemaURL, segments[1], registry); // can set next.$ref again, use seenRefs to avoid circle
               seenRefs.add(ref);
             }
           }
@@ -355,11 +489,13 @@ export class YAMLSchemaService extends JSONSchemaService {
           next._$ref = next.$dynamicRef;
           delete next.$dynamicRef;
           if (segments[0].length > 0) {
-            openPromises.push(resolveExternalLink(next, segments[0], segments[1], parentSchemaURL, parentSchemaDependencies));
+            openPromises.push(
+              resolveExternalLink(next, segments[0], segments[1], parentSchemaURL, parentSchemaDependencies, registry)
+            );
             return;
           } else {
             if (!seenRefs.has(ref)) {
-              merge(next, parentSchema, parentSchemaURL, segments[1]);
+              merge(next, parentSchema, parentSchemaURL, segments[1], registry);
               seenRefs.add(ref);
             }
           }
@@ -393,7 +529,7 @@ export class YAMLSchemaService extends JSONSchemaService {
         const segments = parentSchemaURL.split('#', 2);
         if (segments[0].length > 0 && segments[1].length > 0) {
           const newSchema = {};
-          await resolveExternalLink(newSchema, segments[0], segments[1], parentSchemaURL, parentSchemaDependencies);
+          await resolveExternalLink(newSchema, segments[0], segments[1], parentSchemaURL, parentSchemaDependencies, registry);
           for (const key in schema) {
             if (key === 'required') {
               continue;

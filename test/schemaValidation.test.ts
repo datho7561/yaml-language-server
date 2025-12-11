@@ -2509,5 +2509,156 @@ obj:
       assert.equal('Array has too many items according to schema. Expected 2 or fewer.', result[0].message);
       assert.equal(result[0].severity, DiagnosticSeverity.Error);
     });
+
+    it('draft-2019-09 schema with $anchor reference', async () => {
+      const schema: JSONSchema = {
+        $schema: 'https://json-schema.org/draft/2019-09/schema',
+        type: 'object',
+        $defs: {
+          MyType: {
+            $anchor: 'myAnchor',
+            type: 'string',
+          },
+        },
+        properties: {
+          foo: { $ref: '#myAnchor' },
+        },
+      };
+      schemaProvider.addSchema(SCHEMA_ID, schema);
+      const content = `foo: "bar"`;
+      const result = await parseSetup(content);
+      assert.equal(
+        result.length,
+        0,
+        `Expected no errors, got ${result.length}. Errors: ${JSON.stringify(result.map((r) => r.message))}`
+      );
+    });
+
+    it('draft-2020-12 schema with $anchor reference', async () => {
+      const schema: JSONSchema = {
+        $schema: 'https://json-schema.org/draft/2020-12/schema',
+        type: 'object',
+        $defs: {
+          MyType: {
+            $anchor: 'myAnchor',
+            type: 'string',
+          },
+        },
+        properties: {
+          foo: { $ref: '#myAnchor' },
+        },
+      };
+      schemaProvider.addSchema(SCHEMA_ID, schema);
+      const content = `foo: "bar"`;
+      const result = await parseSetup(content);
+      assert.equal(
+        result.length,
+        0,
+        `Expected no errors, got ${result.length}. Errors: ${JSON.stringify(result.map((r) => r.message))}`
+      );
+    });
+
+    it('draft-2019-09 schema with $anchor in nested $defs', async () => {
+      const schema: JSONSchema = {
+        $schema: 'https://json-schema.org/draft/2019-09/schema',
+        type: 'object',
+        $defs: {
+          nested: {
+            $defs: {
+              DeepType: {
+                $anchor: 'deepAnchor',
+                type: 'number',
+              },
+            },
+          },
+        },
+        properties: {
+          value: { $ref: '#deepAnchor' },
+        },
+      };
+      schemaProvider.addSchema(SCHEMA_ID, schema);
+      const content = `value: 42`;
+      const result = await parseSetup(content);
+      assert.equal(
+        result.length,
+        0,
+        `Expected no errors, got ${result.length}. Errors: ${JSON.stringify(result.map((r) => r.message))}`
+      );
+    });
+
+    it('draft-2019-09 schema with $anchor and $id', async () => {
+      const schema: JSONSchema = {
+        $schema: 'https://json-schema.org/draft/2019-09/schema',
+        $id: 'https://example.com/schema',
+        type: 'object',
+        $defs: {
+          MyType: {
+            $anchor: 'myAnchor',
+            type: 'string',
+          },
+        },
+        properties: {
+          foo: { $ref: '#myAnchor' },
+        },
+      };
+      schemaProvider.addSchema(SCHEMA_ID, schema);
+      const content = `foo: "bar"`;
+      const result = await parseSetup(content);
+      assert.equal(
+        result.length,
+        0,
+        `Expected no errors, got ${result.length}. Errors: ${JSON.stringify(result.map((r) => r.message))}`
+      );
+    });
+
+    it('draft-2019-09 schema with $anchor validation error', async () => {
+      const schema: JSONSchema = {
+        $schema: 'https://json-schema.org/draft/2019-09/schema',
+        type: 'object',
+        $defs: {
+          MyType: {
+            $anchor: 'myAnchor',
+            type: 'string',
+          },
+        },
+        properties: {
+          foo: { $ref: '#myAnchor' },
+        },
+      };
+      schemaProvider.addSchema(SCHEMA_ID, schema);
+      const content = `foo: 123`;
+      const result = await parseSetup(content);
+      assert.equal(
+        1,
+        result.length,
+        `Expected exactly 1 error, got ${result.length}. Errors: ${JSON.stringify(result.map((r) => r.message))}`
+      );
+      assert.equal('Incorrect type. Expected "string".', result[0].message);
+      assert.equal(result[0].severity, DiagnosticSeverity.Error);
+    });
+
+    it('draft-2019-09 schema with invalid $anchor reference', async () => {
+      const schema: JSONSchema = {
+        $schema: 'https://json-schema.org/draft/2019-09/schema',
+        type: 'object',
+        properties: {
+          foo: { $ref: '#nonexistentAnchor' },
+        },
+      };
+      schemaProvider.addSchema(SCHEMA_ID, schema);
+      const content = `foo: "bar"`;
+      const result = await parseSetup(content);
+      assert.equal(
+        1,
+        result.length,
+        `Expected exactly 1 error for invalid anchor reference, got ${result.length}. Errors: ${JSON.stringify(result.map((r) => r.message))}`
+      );
+      // Should have an error about invalid reference
+      assert.ok(
+        result[0].message.includes('nonexistentAnchor') || result[0].message.includes('invalid'),
+        `Expected invalid reference error, got: ${result[0].message}`
+      );
+      assert.equal(result[0].severity, DiagnosticSeverity.Error);
+    });
   });
 });
