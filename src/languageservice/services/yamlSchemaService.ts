@@ -31,7 +31,7 @@ import Ajv, { DefinedError } from 'ajv';
 import Ajv4 from 'ajv-draft-04';
 import { getSchemaTitle } from '../utils/schemaUtils';
 
-const ajv = new Ajv();
+const ajv = new Ajv({ strict: false, allowMatchingProperties: true });
 const ajv4 = new Ajv4();
 
 // load JSON Schema 07 def to validate loaded schemas
@@ -43,6 +43,30 @@ const schema07Validator = ajv.compile(jsonSchema07);
 const jsonSchema04 = require('ajv-draft-04/dist/refs/json-schema-draft-04.json');
 const schema04Validator = ajv4.compile(jsonSchema04);
 const SCHEMA_04_URI_WITH_HTTPS = ajv4.defaultMeta().replace('http://', 'https://');
+
+// load JSON Schema 2019-09 and 2020-12 metaschemas
+// Use Ajv's helper functions to properly load all meta schemas
+// eslint-disable-next-line @typescript-eslint/no-var-requires
+const addMetaSchema2019 = require('ajv/dist/refs/json-schema-2019-09').default;
+// eslint-disable-next-line @typescript-eslint/no-var-requires
+const addMetaSchema2020 = require('ajv/dist/refs/json-schema-2020-12').default;
+
+addMetaSchema2019.call(ajv);
+addMetaSchema2020.call(ajv);
+
+// Load the actual schema JSON objects and compile them directly (safer than getSchema)
+// eslint-disable-next-line @typescript-eslint/no-var-requires
+const jsonSchema2019 = require('ajv/dist/refs/json-schema-2019-09/schema.json');
+// eslint-disable-next-line @typescript-eslint/no-var-requires
+const jsonSchema2020 = require('ajv/dist/refs/json-schema-2020-12/schema.json');
+
+const schema2019Validator = ajv.compile(jsonSchema2019);
+const SCHEMA_2019_URI = 'https://json-schema.org/draft/2019-09/schema';
+const SCHEMA_2019_URI_HTTP = 'http://json-schema.org/draft/2019-09/schema';
+
+const schema2020Validator = ajv.compile(jsonSchema2020);
+const SCHEMA_2020_URI = 'https://json-schema.org/draft/2020-12/schema';
+const SCHEMA_2020_URI_HTTP = 'http://json-schema.org/draft/2020-12/schema';
 
 export declare type CustomSchemaProvider = (uri: string) => Promise<string | string[]>;
 
@@ -169,10 +193,32 @@ export class YAMLSchemaService extends JSONSchemaService {
     let schema: JSONSchema = schemaToResolve.schema;
     const contextService = this.contextService;
 
-    const validator =
-      this.normalizeId(schema.$schema) === ajv4.defaultMeta() || this.normalizeId(schema.$schema) === SCHEMA_04_URI_WITH_HTTPS
-        ? schema04Validator
-        : schema07Validator;
+    const normalizedSchemaUri = this.normalizeId(schema.$schema);
+    let validator;
+    if (normalizedSchemaUri === ajv4.defaultMeta() || normalizedSchemaUri === SCHEMA_04_URI_WITH_HTTPS) {
+      validator = schema04Validator;
+    } else if (
+      normalizedSchemaUri === SCHEMA_2019_URI ||
+      normalizedSchemaUri === SCHEMA_2019_URI_HTTP ||
+      normalizedSchemaUri.includes('2019-09')
+    ) {
+      validator = schema2019Validator;
+    } else if (
+      normalizedSchemaUri === SCHEMA_2020_URI ||
+      normalizedSchemaUri === SCHEMA_2020_URI_HTTP ||
+      normalizedSchemaUri.includes('2020-12')
+    ) {
+      validator = schema2020Validator;
+    } else {
+      validator = schema07Validator;
+    }
+    // Ensure validator is defined before calling it
+    if (!validator) {
+      resolveErrors.push(
+        `Schema '${getSchemaTitle(schemaToResolve.schema, schemaURL)}' could not be validated: validator not available for schema version '${normalizedSchemaUri}'`
+      );
+      return { schema, errors: resolveErrors };
+    }
     if (!validator(schema)) {
       const errs: string[] = [];
       for (const err of validator.errors as DefinedError[]) {
@@ -285,6 +331,7 @@ export class YAMLSchemaService extends JSONSchemaService {
       };
       const handleRef = (next: JSONSchema): void => {
         const seenRefs = new Set();
+        // Handle $ref (static reference)
         while (next.$ref) {
           const ref = decodeURIComponent(next.$ref);
           const segments = ref.split('#', 2);
@@ -301,6 +348,22 @@ export class YAMLSchemaService extends JSONSchemaService {
             }
           }
         }
+        // Handle $dynamicRef (dynamic reference) - similar to $ref but resolved dynamically
+        if (next.$dynamicRef) {
+          const ref = decodeURIComponent(next.$dynamicRef);
+          const segments = ref.split('#', 2);
+          next._$ref = next.$dynamicRef;
+          delete next.$dynamicRef;
+          if (segments[0].length > 0) {
+            openPromises.push(resolveExternalLink(next, segments[0], segments[1], parentSchemaURL, parentSchemaDependencies));
+            return;
+          } else {
+            if (!seenRefs.has(ref)) {
+              merge(next, parentSchema, parentSchemaURL, segments[1]);
+              seenRefs.add(ref);
+            }
+          }
+        }
 
         collectEntries(
           <JSONSchema>next.items,
@@ -311,10 +374,19 @@ export class YAMLSchemaService extends JSONSchemaService {
           next.propertyNames,
           next.if,
           next.then,
-          next.else
+          next.else,
+          next.unevaluatedItems,
+          next.unevaluatedProperties
         );
-        collectMapEntries(next.definitions, next.properties, next.patternProperties, <JSONSchemaMap>next.dependencies);
-        collectArrayEntries(next.anyOf, next.allOf, next.oneOf, <JSONSchema[]>next.items, next.schemaSequence);
+        // Handle both definitions (draft-07) and $defs (2019-09/2020-12)
+        collectMapEntries(
+          next.definitions,
+          next.$defs,
+          next.properties,
+          next.patternProperties,
+          <JSONSchemaMap>next.dependencies
+        );
+        collectArrayEntries(next.anyOf, next.allOf, next.oneOf, <JSONSchema[]>next.items, next.prefixItems, next.schemaSequence);
       };
 
       if (parentSchemaURL.indexOf('#') > 0) {

@@ -65,6 +65,15 @@ export interface JSONSchema {
   then?: JSONSchemaRef;
   else?: JSONSchemaRef;
 
+  // schema draft 2019-09 and 2020-12
+  prefixItems?: JSONSchemaRef[]; // Array form of items (replaces array form of items in 2020-12)
+  unevaluatedItems?: boolean | JSONSchemaRef; // Items not evaluated by prefixItems/items
+  unevaluatedProperties?: boolean | JSONSchemaRef; // Properties not evaluated by properties/patternProperties
+  $defs?: { [name: string]: JSONSchema }; // Replaces definitions
+  $anchor?: string; // Named anchor for static reference
+  $dynamicAnchor?: string; // Named anchor for dynamic reference
+  $dynamicRef?: string; // Dynamic reference
+
   // VSCode extensions
 
   defaultSnippets?: {

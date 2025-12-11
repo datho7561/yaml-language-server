@@ -2253,4 +2253,261 @@ obj:
     const result = await parseSetup(content);
     assert.equal(result.length, 0);
   });
+
+  describe('JSON Schema Draft 2019-09', () => {
+    it('draft-2019-09 schema with prefixItems', async () => {
+      const schema: JSONSchema = {
+        $schema: 'https://json-schema.org/draft/2019-09/schema',
+        type: 'array',
+        prefixItems: [{ type: 'string' }, { type: 'number' }],
+      };
+      schemaProvider.addSchema(SCHEMA_ID, schema);
+      const content = `- "hello"\n- 42`;
+      const result = await parseSetup(content);
+      assert.equal(result.length, 0);
+    });
+
+    it('draft-2019-09 schema with prefixItems and unevaluatedItems', async () => {
+      const schema: JSONSchema = {
+        $schema: 'https://json-schema.org/draft/2019-09/schema',
+        type: 'array',
+        prefixItems: [{ type: 'string' }, { type: 'number' }],
+        unevaluatedItems: { type: 'boolean' },
+      };
+      schemaProvider.addSchema(SCHEMA_ID, schema);
+      const content = `- "hello"\n- 42\n- true`;
+      const result = await parseSetup(content);
+      assert.equal(result.length, 0);
+    });
+
+    it('draft-2019-09 schema with prefixItems and unevaluatedItems: false', async () => {
+      const schema: JSONSchema = {
+        $schema: 'https://json-schema.org/draft/2019-09/schema',
+        type: 'array',
+        prefixItems: [{ type: 'string' }, { type: 'number' }],
+        unevaluatedItems: false,
+      };
+      schemaProvider.addSchema(SCHEMA_ID, schema);
+      const content = `- "hello"\n- 42\n- extra`;
+      const result = await parseSetup(content);
+      assert.equal(
+        1,
+        result.length,
+        `Expected exactly 1 error, got ${result.length}. Errors: ${JSON.stringify(result.map((r) => r.message))}`
+      );
+      assert.equal('Array has too many items according to schema. Expected 2 or fewer.', result[0].message);
+      assert.equal(result[0].severity, DiagnosticSeverity.Error);
+    });
+
+    it('draft-2019-09 schema with unevaluatedProperties', async () => {
+      const schema: JSONSchema = {
+        $schema: 'https://json-schema.org/draft/2019-09/schema',
+        type: 'object',
+        properties: {
+          name: { type: 'string' },
+        },
+        unevaluatedProperties: { type: 'string' },
+      };
+      schemaProvider.addSchema(SCHEMA_ID, schema);
+      const content = `name: "test"\nextra: "allowed"`;
+      const result = await parseSetup(content);
+      assert.strictEqual(result.length, 0, 'Valid object with unevaluatedProperties should have no errors');
+    });
+
+    it('draft-2019-09 schema with unevaluatedProperties - type error for extra property', async () => {
+      const schema: JSONSchema = {
+        $schema: 'https://json-schema.org/draft/2019-09/schema',
+        type: 'object',
+        properties: {
+          name: { type: 'string' },
+        },
+        unevaluatedProperties: { type: 'string' },
+      };
+      schemaProvider.addSchema(SCHEMA_ID, schema);
+      const content = `name: "test"\nextra: 123`;
+      const result = await parseSetup(content);
+      assert.equal(1, result.length, `Expected exactly 1 error, got ${result}`);
+      assert.equal('Incorrect type. Expected "string".', result[0].message);
+      assert.equal(result[0].severity, DiagnosticSeverity.Error);
+    });
+
+    it('draft-2019-09 schema with unevaluatedProperties: false', async () => {
+      const schema: JSONSchema = {
+        $schema: 'https://json-schema.org/draft/2019-09/schema',
+        type: 'object',
+        properties: {
+          name: { type: 'string' },
+        },
+        unevaluatedProperties: false,
+      };
+      schemaProvider.addSchema(SCHEMA_ID, schema);
+      const content = `name: "test"\nextra: "not allowed"`;
+      const result = await parseSetup(content);
+      assert.equal(1, result.length, `Expected exactly 1 error, got ${result}`);
+      assert.equal('Property extra is not allowed.', result[0].message);
+      assert.equal(result[0].severity, DiagnosticSeverity.Error);
+    });
+
+    it('draft-2019-09 schema with $defs', async () => {
+      const schema: JSONSchema = {
+        $schema: 'https://json-schema.org/draft/2019-09/schema',
+        type: 'object',
+        properties: {
+          myProperty: {
+            $ref: '#/$defs/MyType',
+          },
+        },
+        $defs: {
+          MyType: {
+            type: 'object',
+            properties: {
+              foo: { type: 'string' },
+            },
+          },
+        },
+      };
+      schemaProvider.addSchema(SCHEMA_ID, schema);
+      const content = `myProperty:\n  foo: bar`;
+      const result = await parseSetup(content);
+      assert.equal(result.length, 0);
+    });
+
+    it('draft-2019-09 schema with items as schema (not array)', async () => {
+      const schema: JSONSchema = {
+        $schema: 'https://json-schema.org/draft/2019-09/schema',
+        type: 'array',
+        items: { type: 'string' },
+      };
+      schemaProvider.addSchema(SCHEMA_ID, schema);
+      const content = `- "hello"\n- "world"`;
+      const result = await parseSetup(content);
+      assert.equal(result.length, 0);
+    });
+  });
+
+  describe('JSON Schema Draft 2020-12', () => {
+    it('draft-2020-12 schema with prefixItems (required)', async () => {
+      const schema: JSONSchema = {
+        $schema: 'https://json-schema.org/draft/2020-12/schema',
+        type: 'array',
+        prefixItems: [{ type: 'string' }, { type: 'number' }],
+      };
+      schemaProvider.addSchema(SCHEMA_ID, schema);
+      const content = `- "hello"\n- 42`;
+      const result = await parseSetup(content);
+      assert.equal(result.length, 0);
+    });
+
+    it('draft-2020-12 schema with prefixItems and unevaluatedItems', async () => {
+      const schema: JSONSchema = {
+        $schema: 'https://json-schema.org/draft/2020-12/schema',
+        type: 'array',
+        prefixItems: [{ type: 'string' }, { type: 'number' }],
+        unevaluatedItems: { type: 'boolean' },
+      };
+      schemaProvider.addSchema(SCHEMA_ID, schema);
+      const content = `- "hello"\n- 42\n- true`;
+      const result = await parseSetup(content);
+      assert.equal(result.length, 0);
+    });
+
+    it('draft-2020-12 schema with items as schema only', async () => {
+      const schema: JSONSchema = {
+        $schema: 'https://json-schema.org/draft/2020-12/schema',
+        type: 'array',
+        items: { type: 'string' },
+      };
+      schemaProvider.addSchema(SCHEMA_ID, schema);
+      const content = `- "hello"\n- "world"`;
+      const result = await parseSetup(content);
+      assert.equal(result.length, 0);
+    });
+
+    it('draft-2020-12 schema rejects array form of items', async () => {
+      const schema: JSONSchema = {
+        $schema: 'https://json-schema.org/draft/2020-12/schema',
+        type: 'array',
+        items: [{ type: 'string' }, { type: 'number' }] as unknown as JSONSchema,
+      };
+      schemaProvider.addSchema(SCHEMA_ID, schema);
+      const content = `- "hello"\n- 42`;
+      const result = await parseSetup(content);
+      // Should have validation error about items being array
+      assert.equal(1, result.length, `Expected exactly 1 error, got ${result}`);
+      // Check the error about items array in 2020-12
+      assert.equal('In JSON Schema 2020-12, items cannot be an array. Use prefixItems instead.', result[0].message);
+      assert.equal(result[0].severity, DiagnosticSeverity.Error);
+    });
+
+    it('draft-2020-12 schema with unevaluatedProperties', async () => {
+      const schema: JSONSchema = {
+        $schema: 'https://json-schema.org/draft/2020-12/schema',
+        type: 'object',
+        properties: {
+          name: { type: 'string' },
+        },
+        unevaluatedProperties: { type: 'string' },
+      };
+      schemaProvider.addSchema(SCHEMA_ID, schema);
+      const content = `name: "test"\nextra: "allowed"`;
+      const result = await parseSetup(content);
+      assert.equal(result.length, 0);
+    });
+
+    it('draft-2020-12 schema with $defs', async () => {
+      const schema: JSONSchema = {
+        $schema: 'https://json-schema.org/draft/2020-12/schema',
+        type: 'object',
+        properties: {
+          myProperty: {
+            $ref: '#/$defs/MyType',
+          },
+        },
+        $defs: {
+          MyType: {
+            type: 'object',
+            properties: {
+              foo: { type: 'string' },
+            },
+          },
+        },
+      };
+      schemaProvider.addSchema(SCHEMA_ID, schema);
+      const content = `myProperty:\n  foo: bar`;
+      const result = await parseSetup(content);
+      assert.equal(result.length, 0);
+    });
+
+    it('draft-2020-12 schema validation errors', async () => {
+      const schema: JSONSchema = {
+        $schema: 'https://json-schema.org/draft/2020-12/schema',
+        type: 'object',
+        properties: {
+          name: { type: 'string' },
+        },
+        unevaluatedProperties: false,
+      };
+      schemaProvider.addSchema(SCHEMA_ID, schema);
+      const content = `name: "test"\nextra: "not allowed"`;
+      const result = await parseSetup(content);
+      assert.equal(1, result.length, `Expected exactly 1 error, got ${result.length}`);
+      assert.equal('Property extra is not allowed.', result[0].message);
+      assert.equal(result[0].severity, DiagnosticSeverity.Error);
+    });
+
+    it('draft-2020-12 schema with prefixItems and extra items (unevaluatedItems: false)', async () => {
+      const schema: JSONSchema = {
+        $schema: 'https://json-schema.org/draft/2020-12/schema',
+        type: 'array',
+        prefixItems: [{ type: 'string' }, { type: 'number' }],
+        unevaluatedItems: false,
+      };
+      schemaProvider.addSchema(SCHEMA_ID, schema);
+      const content = `- "hello"\n- 42\n- extra`;
+      const result = await parseSetup(content);
+      assert.equal(1, result.length, `Expected exactly 1 error, got ${result.length}`);
+      assert.equal('Array has too many items according to schema. Expected 2 or fewer.', result[0].message);
+      assert.equal(result[0].severity, DiagnosticSeverity.Error);
+    });
+  });
 });
