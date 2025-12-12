@@ -19,8 +19,9 @@ describe('Bundle l10n Test', () => {
     const yamlSettings = new SettingsState();
     process.argv.push('--node-ipc');
     const connection = createConnection();
+    // Create a new schema provider instance for this test suite
+    const testSchemaProvider = new TestCustomSchemaProvider();
     const schemaRequestHandlerWrapper = (connection: Connection, uri: string): Promise<string> => {
-      const testSchemaProvider = TestCustomSchemaProvider.instance();
       const testSchema = testSchemaProvider.getContentForSchema(uri);
       if (testSchema) {
         return Promise.resolve(testSchema);
