@@ -70,9 +70,16 @@ describe('Validation Tests', () => {
   }
 
   afterEach(() => {
-    // Clear the schema cache BEFORE deleting to ensure proper cleanup
-    languageService.resetSchema(`file:///${SCHEMA_ID}`);
-    schemaProvider.deleteSchema(SCHEMA_ID);
+    // Clear all schemas from the provider to ensure test isolation
+    // This prevents schemas from one test (e.g., external schemas registered with addSchemaWithUri)
+    // from interfering with subsequent tests
+    const allSchemaUris = schemaProvider.getAllSchemaUris();
+    schemaProvider.clearAll();
+    // Reset cached schemas in the language service for all registered schema URIs
+    // This ensures that when schemas are re-registered, they're loaded fresh
+    allSchemaUris.forEach((uri) => {
+      languageService.resetSchema(uri);
+    });
   });
 
   describe('Boolean tests', () => {
@@ -2824,6 +2831,198 @@ children:
         };
         // Register external schema first with proper URI
         schemaProvider.addSchemaWithUri('tree', 'http://example.com/tree', externalSchema);
+        schemaProvider.addSchema(SCHEMA_ID, mainSchema);
+        const content = `tree:
+  name: "root"
+  children:
+    - name: "child"`;
+        const result = await parseSetup(content);
+        assert.equal(
+          result.length,
+          0,
+          `Expected no errors, got ${result.length}. Errors: ${JSON.stringify(result.map((r) => r.message))}`
+        );
+      });
+    });
+
+    describe('$dynamicAnchor and $dynamicRef support', () => {
+      it('draft-2020-12 schema with $dynamicAnchor and $dynamicRef', async () => {
+        const schema: JSONSchema = {
+          $schema: 'https://json-schema.org/draft/2020-12/schema',
+          type: 'object',
+          $dynamicAnchor: 'tree',
+          properties: {
+            name: { type: 'string' },
+            children: {
+              type: 'array',
+              items: { $dynamicRef: '#tree' },
+            },
+          },
+        };
+        schemaProvider.addSchema(SCHEMA_ID, schema);
+        const content = `name: "parent"
+children:
+  - name: "child1"
+    children: []
+  - name: "child2"`;
+        const result = await parseSetup(content);
+        assert.equal(
+          result.length,
+          0,
+          `Expected no errors, got ${result.length}. Errors: ${JSON.stringify(result.map((r) => r.message))}`
+        );
+      });
+
+      it('draft-2020-12 schema with named $dynamicAnchor in $defs', async () => {
+        const schema: JSONSchema = {
+          $schema: 'https://json-schema.org/draft/2020-12/schema',
+          type: 'object',
+          $defs: {
+            TreeNode: {
+              $dynamicAnchor: 'node',
+              type: 'object',
+              properties: {
+                value: { type: 'string' },
+                children: {
+                  type: 'array',
+                  items: { $dynamicRef: '#node' },
+                },
+              },
+            },
+          },
+          allOf: [{ $ref: '#/$defs/TreeNode' }],
+        };
+        schemaProvider.addSchema(SCHEMA_ID, schema);
+        const content = `value: "root"
+children:
+  - value: "child1"
+    children: []
+  - value: "child2"
+    children:
+      - value: "grandchild"`;
+        const result = await parseSetup(content);
+        assert.equal(
+          result.length,
+          0,
+          `Expected no errors, got ${result.length}. Errors: ${JSON.stringify(result.map((r) => r.message))}`
+        );
+      });
+
+      it('draft-2020-12 schema with $dynamicRef validation error', async () => {
+        const schema: JSONSchema = {
+          $schema: 'https://json-schema.org/draft/2020-12/schema',
+          type: 'object',
+          $dynamicAnchor: 'tree',
+          properties: {
+            name: { type: 'string' },
+            children: {
+              type: 'array',
+              items: { $dynamicRef: '#tree' },
+            },
+          },
+        };
+        schemaProvider.addSchema(SCHEMA_ID, schema);
+        const content = `name: 123
+children: []`;
+        const result = await parseSetup(content);
+        assert.equal(
+          1,
+          result.length,
+          `Expected exactly 1 error, got ${result.length}. Errors: ${JSON.stringify(result.map((r) => r.message))}`
+        );
+        assert.equal('Incorrect type. Expected "string".', result[0].message);
+        assert.equal(result[0].severity, DiagnosticSeverity.Error);
+      });
+
+      it('draft-2020-12 schema with nested $dynamicAnchor', async () => {
+        const schema: JSONSchema = {
+          $schema: 'https://json-schema.org/draft/2020-12/schema',
+          type: 'object',
+          $defs: {
+            InnerNode: {
+              $dynamicAnchor: 'inner',
+              type: 'object',
+              properties: {
+                data: { type: 'string' },
+                nested: {
+                  type: 'array',
+                  items: { $dynamicRef: '#inner' },
+                },
+              },
+            },
+            OuterNode: {
+              $dynamicAnchor: 'outer',
+              type: 'object',
+              properties: {
+                inner: { $ref: '#/$defs/InnerNode' },
+                outerRef: { $dynamicRef: '#outer' },
+              },
+            },
+          },
+          allOf: [{ $ref: '#/$defs/OuterNode' }],
+        };
+        schemaProvider.addSchema(SCHEMA_ID, schema);
+        const content = `inner:
+  data: "inner data"
+  nested:
+    - data: "nested data"
+outerRef:
+  inner:
+    data: "another inner"`;
+        const result = await parseSetup(content);
+        assert.equal(
+          result.length,
+          0,
+          `Expected no errors, got ${result.length}. Errors: ${JSON.stringify(result.map((r) => r.message))}`
+        );
+      });
+
+      it('draft-2020-12 schema with invalid $dynamicRef', async () => {
+        const schema: JSONSchema = {
+          $schema: 'https://json-schema.org/draft/2020-12/schema',
+          type: 'object',
+          properties: {
+            foo: { $dynamicRef: '#nonexistent' },
+          },
+        };
+        schemaProvider.addSchema(SCHEMA_ID, schema);
+        const content = `foo: "bar"`;
+        const result = await parseSetup(content);
+        assert.equal(
+          1,
+          result.length,
+          `Expected exactly 1 error, got ${result.length}. Errors: ${JSON.stringify(result.map((r) => r.message))}`
+        );
+        assert.equal(result[0].message, "$ref '#nonexistent' in 'file:///default_schema_id.yaml' can not be resolved.");
+        assert.equal(result[0].severity, DiagnosticSeverity.Error);
+      });
+
+      it('draft-2020-12 schema with $dynamicRef to external schema', async () => {
+        const externalSchemaUri = 'http://example.com/tree';
+        const externalSchema: JSONSchema = {
+          $schema: 'https://json-schema.org/draft/2020-12/schema',
+          $id: 'http://example.com/tree',
+          $dynamicAnchor: 'tree',
+          type: 'object',
+          properties: {
+            name: { type: 'string' },
+            children: {
+              type: 'array',
+              items: { $dynamicRef: '#tree' },
+            },
+          },
+        };
+        const mainSchema: JSONSchema = {
+          $schema: 'https://json-schema.org/draft/2020-12/schema',
+          type: 'object',
+          properties: {
+            tree: { $dynamicRef: 'http://example.com/tree#tree' },
+          },
+        };
+        // Register external schema first with proper URI
+        // Note: afterEach now clears all schemas from the provider and resets cached schemas,
+        // so we don't need to manually delete or reset here
+        schemaProvider.addSchemaWithUri('tree', externalSchemaUri, externalSchema);
         schemaProvider.addSchema(SCHEMA_ID, mainSchema);
         const content = `tree:
   name: "root"

@@ -176,6 +176,22 @@ export class TestCustomSchemaProvider {
   }
 
   /**
+   * Clears all schemas from the provider.
+   * Useful for test cleanup to ensure test isolation.
+   */
+  public clearAll(): void {
+    this.schemas = [];
+  }
+
+  /**
+   * Gets all registered schema URIs.
+   * Useful for test cleanup to reset cached schemas.
+   */
+  public getAllSchemaUris(): string[] {
+    return this.schemas.map((item) => item[1]);
+  }
+
+  /**
    * Checks if a schema exists for a given document.
    * @param doc The uri of the document
    * @returns True if a schema exists for the document, false otherwise.
