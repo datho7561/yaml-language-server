@@ -3315,5 +3315,153 @@ pointer: 42`;
         );
       });
     });
+
+    describe('Validation Integration', () => {
+      it('draft-2019-09 validation error with $anchor reference', async () => {
+        const schema: JSONSchema = {
+          $schema: 'https://json-schema.org/draft/2019-09/schema',
+          type: 'object',
+          $defs: {
+            StringType: {
+              $anchor: 'stringType',
+              type: 'string',
+              minLength: 5,
+            },
+          },
+          properties: {
+            value: { $ref: '#stringType' },
+          },
+        };
+        schemaProvider.addSchema(SCHEMA_ID, schema);
+        const content = `value: "abc"`; // Too short
+        const result = await parseSetup(content);
+        assert.equal(
+          result.length,
+          1,
+          `Expected 1 error, got ${result.length}. Errors: ${JSON.stringify(result.map((r) => r.message))}`
+        );
+        assert.equal(result[0].severity, DiagnosticSeverity.Error, `Error severity should be Error. Got: ${result[0].severity}`);
+        assert.equal(
+          result[0].message,
+          'String is shorter than the minimum length of 5.',
+          `Expected exact error message. Got: ${result[0].message}`
+        );
+      });
+
+      it('draft-2020-12 validation error with $dynamicAnchor reference', async () => {
+        const schema: JSONSchema = {
+          $schema: 'https://json-schema.org/draft/2020-12/schema',
+          type: 'object',
+          $defs: {
+            NumberType: {
+              $dynamicAnchor: 'numberType',
+              type: 'number',
+              minimum: 10,
+            },
+          },
+          properties: {
+            value: { $ref: '#/$defs/NumberType' },
+          },
+        };
+        schemaProvider.addSchema(SCHEMA_ID, schema);
+        const content = `value: 5`; // Too small
+        const result = await parseSetup(content);
+        assert.equal(
+          result.length,
+          1,
+          `Expected 1 error, got ${result.length}. Errors: ${JSON.stringify(result.map((r) => r.message))}`
+        );
+        assert.equal(result[0].severity, DiagnosticSeverity.Error, `Error severity should be Error. Got: ${result[0].severity}`);
+        assert.equal(
+          result[0].message,
+          'Value is below the minimum of 10.',
+          `Expected exact error message. Got: ${result[0].message}`
+        );
+      });
+
+      it('draft-2019-09 validation with $recursiveRef in nested structure', async () => {
+        const schema: JSONSchema = {
+          $schema: 'https://json-schema.org/draft/2019-09/schema',
+          type: 'object',
+          $recursiveAnchor: true,
+          properties: {
+            value: { type: 'string' },
+            children: {
+              type: 'array',
+              items: { $recursiveRef: '#' },
+            },
+          },
+          required: ['value'],
+        };
+        schemaProvider.addSchema(SCHEMA_ID, schema);
+        const content = `value: "test"
+children:
+  - value: "child"`;
+        const result = await parseSetup(content);
+        assert.equal(
+          result.length,
+          0,
+          `Expected no errors, got ${result.length}. Errors: ${JSON.stringify(result.map((r) => r.message))}`
+        );
+      });
+
+      it('draft-2019-09 validation error with missing required property via anchor', async () => {
+        const schema: JSONSchema = {
+          $schema: 'https://json-schema.org/draft/2019-09/schema',
+          type: 'object',
+          $defs: {
+            Person: {
+              $anchor: 'person',
+              type: 'object',
+              properties: {
+                name: { type: 'string' },
+                age: { type: 'number' },
+              },
+              required: ['name', 'age'],
+            },
+          },
+          properties: {
+            person: { $ref: '#person' },
+          },
+        };
+        schemaProvider.addSchema(SCHEMA_ID, schema);
+        const content = `person:
+  name: "John"`; // Missing age
+        const result = await parseSetup(content);
+        assert.equal(
+          result.length,
+          1,
+          `Expected 1 error, got ${result.length}. Errors: ${JSON.stringify(result.map((r) => r.message))}`
+        );
+        assert.equal(result[0].severity, DiagnosticSeverity.Error, `Error severity should be Error. Got: ${result[0].severity}`);
+        assert.equal(result[0].message, 'Missing property "age".', `Expected exact error message. Got: ${result[0].message}`);
+      });
+
+      it('draft-2020-12 validation with unevaluatedProperties and anchor reference', async () => {
+        const schema: JSONSchema = {
+          $schema: 'https://json-schema.org/draft/2020-12/schema',
+          type: 'object',
+          properties: {
+            baseProp: { type: 'string' },
+          },
+          unevaluatedProperties: false,
+        };
+        schemaProvider.addSchema(SCHEMA_ID, schema);
+        const content = `baseProp: "test"
+extraProp: "not allowed"`;
+        const result = await parseSetup(content);
+        assert.equal(
+          result.length,
+          1,
+          `Expected 1 error, got ${result.length}. Errors: ${JSON.stringify(result.map((r) => r.message))}`
+        );
+        assert.equal(result[0].severity, DiagnosticSeverity.Error, `Error severity should be Error. Got: ${result[0].severity}`);
+        assert.equal(
+          result[0].message,
+          'Property extraProp is not allowed.',
+          `Expected exact error message. Got: ${result[0].message}`
+        );
+      });
+    });
   });
 });
