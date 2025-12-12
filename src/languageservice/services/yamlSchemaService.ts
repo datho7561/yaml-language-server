@@ -445,6 +445,115 @@ export class YAMLSchemaService extends JSONSchemaService {
       return buildAnchorRegistryGeneric('dynamicAnchor', schema, baseURI, registry, visited, true);
     };
 
+    /**
+     * Unified fragment resolution function that handles all fragment types:
+     * - Anchor references (#myAnchor) - resolved via anchorRegistry
+     * - Recursive anchor references (#recursiveAnchor) - resolved via recursiveAnchorRegistry
+     * - Dynamic anchor references (#dynamicAnchor) - resolved via dynamicAnchorRegistry
+     * - JSON pointer paths (#/definitions/MyType) - resolved via JSON pointer traversal
+     *
+     * @param schema - The schema to resolve fragments in
+     * @param fragment - The fragment string (e.g., "myAnchor", "/definitions/MyType")
+     * @param anchorRegistry - Registry of $anchor declarations
+     * @param recursiveAnchorRegistry - Registry of $recursiveAnchor declarations
+     * @param dynamicAnchorRegistry - Registry of $dynamicAnchor declarations
+     * @param schemaURI - The base URI of the schema (for anchor resolution)
+     * @returns The resolved schema section, or undefined if not found
+     */
+    const resolveFragment = (
+      schema: JSONSchema,
+      fragment: string,
+      anchorRegistry?: Map<string, JSONSchema>,
+      recursiveAnchorRegistry?: Map<string, JSONSchema>,
+      dynamicAnchorRegistry?: Map<string, JSONSchema>,
+      schemaURI?: string
+    ): JSONSchema | undefined => {
+      if (!fragment) {
+        return schema;
+      }
+
+      // Determine the schema URI for anchor resolution
+      let resolvedSchemaURI = schemaURI || schema.url || '';
+      if (!resolvedSchemaURI && schema.$id) {
+        resolvedSchemaURI = resolveSchemaId(schema.$id, schemaURI || '') || '';
+      }
+
+      // Check if fragment is an anchor reference (doesn't start with '/')
+      if (fragment[0] !== '/') {
+        // Try recursive anchor registry first (for $recursiveRef)
+        if (recursiveAnchorRegistry) {
+          const fullRecursiveAnchorKey = resolvedSchemaURI + '#' + fragment;
+          if (recursiveAnchorRegistry.has(fullRecursiveAnchorKey)) {
+            return recursiveAnchorRegistry.get(fullRecursiveAnchorKey);
+          }
+          const recursiveAnchorKey = '#' + fragment;
+          if (recursiveAnchorRegistry.has(recursiveAnchorKey)) {
+            return recursiveAnchorRegistry.get(recursiveAnchorKey);
+          }
+          // For Draft-07 anonymous recursive anchor, try "#"
+          if (fragment === '' && recursiveAnchorRegistry.has('#')) {
+            return recursiveAnchorRegistry.get('#');
+          }
+        }
+
+        // Try dynamic anchor registry (for $dynamicRef)
+        if (dynamicAnchorRegistry) {
+          const fullDynamicAnchorKey = resolvedSchemaURI + '#' + fragment;
+          if (dynamicAnchorRegistry.has(fullDynamicAnchorKey)) {
+            return dynamicAnchorRegistry.get(fullDynamicAnchorKey);
+          }
+          // Also try with schema.$id if it's different from resolvedSchemaURI
+          if (schema.$id && schema.$id !== resolvedSchemaURI) {
+            const normalizedId = resolveSchemaId(schema.$id, schemaURI || '') || '';
+            if (normalizedId) {
+              const idBasedKey = normalizedId + '#' + fragment;
+              if (dynamicAnchorRegistry.has(idBasedKey)) {
+                return dynamicAnchorRegistry.get(idBasedKey);
+              }
+            }
+          }
+          const dynamicAnchorKey = '#' + fragment;
+          if (dynamicAnchorRegistry.has(dynamicAnchorKey)) {
+            return dynamicAnchorRegistry.get(dynamicAnchorKey);
+          }
+        }
+
+        // Try regular anchor registry (for $ref with $anchor)
+        if (anchorRegistry) {
+          const fullAnchorKey = resolvedSchemaURI + '#' + fragment;
+          if (anchorRegistry.has(fullAnchorKey)) {
+            return anchorRegistry.get(fullAnchorKey);
+          }
+          const anchorKey = '#' + fragment;
+          if (anchorRegistry.has(anchorKey)) {
+            return anchorRegistry.get(anchorKey);
+          }
+        }
+
+        // If no anchor found, return undefined (caller should handle error)
+        return undefined;
+      }
+
+      // JSON pointer resolution (fragment starts with '/')
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      let current: any = schema;
+      let jsonPointerPath = fragment;
+      // Remove leading '/' if present
+      if (jsonPointerPath[0] === '/') {
+        jsonPointerPath = jsonPointerPath.substr(1);
+      }
+      // Traverse the JSON pointer path
+      jsonPointerPath.split('/').some((part) => {
+        current = current[part];
+        return !current;
+      });
+      return current;
+    };
+
+    /**
+     * Legacy function name - delegates to resolveFragment for backward compatibility
+     * @deprecated Use resolveFragment instead
+     */
     const findSection = (
       schema: JSONSchema,
       path: string,
@@ -453,87 +562,8 @@ export class YAMLSchemaService extends JSONSchemaService {
       dynamicAnchorRegistry?: Map<string, JSONSchema>,
       schemaURI?: string
     ): JSONSchema => {
-      if (!path) {
-        return schema;
-      }
-
-      // Check if path is an anchor reference (doesn't start with '/')
-      if (path[0] !== '/') {
-        // Use provided schemaURI, or fall back to schema.url || schema.$id
-        // Normalize schema.$id if used to ensure consistency with registry keys
-        let resolvedSchemaURI = schemaURI || schema.url || '';
-        if (!resolvedSchemaURI && schema.$id) {
-          resolvedSchemaURI = this.normalizeId(schema.$id);
-        }
-
-        // First try recursive anchor registry (for $recursiveRef)
-        if (recursiveAnchorRegistry) {
-          // Try with full URI + anchor
-          const fullRecursiveAnchorKey = resolvedSchemaURI + '#' + path;
-          if (recursiveAnchorRegistry.has(fullRecursiveAnchorKey)) {
-            return recursiveAnchorRegistry.get(fullRecursiveAnchorKey);
-          }
-          // Try with just #anchor (same-document reference)
-          const recursiveAnchorKey = '#' + path;
-          if (recursiveAnchorRegistry.has(recursiveAnchorKey)) {
-            return recursiveAnchorRegistry.get(recursiveAnchorKey);
-          }
-          // For Draft-07 anonymous recursive anchor, try "#"
-          if (path === '' && recursiveAnchorRegistry.has('#')) {
-            return recursiveAnchorRegistry.get('#');
-          }
-        }
-
-        // Then try dynamic anchor registry (for $dynamicRef)
-        if (dynamicAnchorRegistry) {
-          // Try with full URI + anchor (using provided schemaURI)
-          const fullDynamicAnchorKey = resolvedSchemaURI + '#' + path;
-          if (dynamicAnchorRegistry.has(fullDynamicAnchorKey)) {
-            return dynamicAnchorRegistry.get(fullDynamicAnchorKey);
-          }
-          // Also try with schema.$id if it's different from resolvedSchemaURI
-          if (schema.$id && schema.$id !== resolvedSchemaURI) {
-            const normalizedId = this.normalizeId(schema.$id);
-            const idBasedKey = normalizedId + '#' + path;
-            if (dynamicAnchorRegistry.has(idBasedKey)) {
-              return dynamicAnchorRegistry.get(idBasedKey);
-            }
-          }
-          // Try with just #anchor (same-document reference)
-          const dynamicAnchorKey = '#' + path;
-          if (dynamicAnchorRegistry.has(dynamicAnchorKey)) {
-            return dynamicAnchorRegistry.get(dynamicAnchorKey);
-          }
-        }
-
-        // Then try regular anchor registry (for $ref with $anchor)
-        if (anchorRegistry) {
-          // Try to resolve as anchor reference
-          // First try with full URI + anchor
-          const fullAnchorKey = resolvedSchemaURI + '#' + path;
-          if (anchorRegistry.has(fullAnchorKey)) {
-            return anchorRegistry.get(fullAnchorKey);
-          }
-          // Then try with just #anchor (same-document reference)
-          const anchorKey = '#' + path;
-          if (anchorRegistry.has(anchorKey)) {
-            return anchorRegistry.get(anchorKey);
-          }
-        }
-      }
-
-      // Fall back to JSON pointer resolution
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      let current: any = schema;
-      let jsonPointerPath = path;
-      if (jsonPointerPath[0] === '/') {
-        jsonPointerPath = jsonPointerPath.substr(1);
-      }
-      jsonPointerPath.split('/').some((part) => {
-        current = current[part];
-        return !current;
-      });
-      return current;
+      const resolved = resolveFragment(schema, path, anchorRegistry, recursiveAnchorRegistry, dynamicAnchorRegistry, schemaURI);
+      return resolved !== undefined ? resolved : null;
     };
 
     /**

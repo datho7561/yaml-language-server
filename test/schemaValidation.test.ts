@@ -3180,5 +3180,140 @@ outerRef:
         );
       });
     });
+
+    describe('Enhanced Fragment Resolution', () => {
+      it('draft-2019-09 mixed anchor and JSON pointer references', async () => {
+        const schema: JSONSchema = {
+          $schema: 'https://json-schema.org/draft/2019-09/schema',
+          type: 'object',
+          $defs: {
+            AnchorType: {
+              $anchor: 'anchorType',
+              type: 'string',
+            },
+            PointerType: {
+              type: 'number',
+            },
+          },
+          properties: {
+            // Mix anchor reference and JSON pointer in same schema
+            anchorRef: { $ref: '#anchorType' },
+            pointerRef: { $ref: '#/$defs/PointerType' },
+          },
+        };
+        schemaProvider.addSchema(SCHEMA_ID, schema);
+        const content = `anchorRef: "test"
+pointerRef: 42`;
+        const result = await parseSetup(content);
+        assert.equal(
+          result.length,
+          0,
+          `Expected no errors, got ${result.length}. Errors: ${JSON.stringify(result.map((r) => r.message))}`
+        );
+      });
+
+      it('draft-2020-12 invalid anchor reference error', async () => {
+        const schema: JSONSchema = {
+          $schema: 'https://json-schema.org/draft/2020-12/schema',
+          type: 'object',
+          properties: {
+            invalidAnchor: { $ref: '#nonexistentAnchor' },
+            invalidPointer: { $ref: '#/$defs/Nonexistent' },
+          },
+        };
+        schemaProvider.addSchema(SCHEMA_ID, schema);
+        const content = `invalidAnchor: "test"
+invalidPointer: "test"`;
+        const result = await parseSetup(content);
+        // Should have at least one resolution error
+        assert(
+          result.length >= 1,
+          `Expected at least 1 error, got ${result.length}. Errors: ${JSON.stringify(result.map((r) => r.message))}`
+        );
+        // Should report resolution errors
+        assert(
+          result.some((r) => r.message.includes('can not be resolved')),
+          'Should have resolution error'
+        );
+      });
+
+      it('draft-2019-09 schema with anchor, recursive anchor, and JSON pointer', async () => {
+        const schema: JSONSchema = {
+          $schema: 'https://json-schema.org/draft/2019-09/schema',
+          type: 'object',
+          $defs: {
+            AnchorType: {
+              $anchor: 'anchor',
+              type: 'string',
+            },
+            RecursiveType: {
+              $recursiveAnchor: 'recursive',
+              type: 'object',
+              properties: {
+                self: { $recursiveRef: '#recursive' },
+              },
+            },
+            PointerType: {
+              type: 'number',
+            },
+          },
+          properties: {
+            anchor: { $ref: '#anchor' },
+            recursive: { $ref: '#/$defs/RecursiveType' },
+            pointer: { $ref: '#/$defs/PointerType' },
+          },
+        };
+        schemaProvider.addSchema(SCHEMA_ID, schema);
+        const content = `anchor: "test"
+recursive:
+  self: {}
+pointer: 42`;
+        const result = await parseSetup(content);
+        assert.equal(
+          result.length,
+          0,
+          `Expected no errors, got ${result.length}. Errors: ${JSON.stringify(result.map((r) => r.message))}`
+        );
+      });
+
+      it('draft-2020-12 schema with all reference types', async () => {
+        const schema: JSONSchema = {
+          $schema: 'https://json-schema.org/draft/2020-12/schema',
+          type: 'object',
+          $defs: {
+            AnchorType: {
+              $anchor: 'anchor',
+              type: 'string',
+            },
+            DynamicType: {
+              $dynamicAnchor: 'dynamic',
+              type: 'object',
+              properties: {
+                self: { $dynamicRef: '#dynamic' },
+              },
+            },
+            PointerType: {
+              type: 'number',
+            },
+          },
+          properties: {
+            anchor: { $ref: '#anchor' },
+            dynamic: { $ref: '#/$defs/DynamicType' },
+            pointer: { $ref: '#/$defs/PointerType' },
+          },
+        };
+        schemaProvider.addSchema(SCHEMA_ID, schema);
+        const content = `anchor: "test"
+dynamic:
+  self: {}
+pointer: 42`;
+        const result = await parseSetup(content);
+        assert.equal(
+          result.length,
+          0,
+          `Expected no errors, got ${result.length}. Errors: ${JSON.stringify(result.map((r) => r.message))}`
+        );
+      });
+    });
   });
 });
