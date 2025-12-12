@@ -3036,5 +3036,149 @@ outerRef:
         );
       });
     });
+
+    describe('$id Base URI Handling', () => {
+      it('draft-2019-09 schema with $id and $anchor', async () => {
+        const schema: JSONSchema = {
+          $schema: 'https://json-schema.org/draft/2019-09/schema',
+          $id: 'https://example.com/schema',
+          $defs: {
+            MyType: {
+              $anchor: 'myAnchor',
+              type: 'string',
+            },
+          },
+          properties: {
+            // Use same-document reference - anchor should be scoped to $id
+            foo: { $ref: '#myAnchor' },
+          },
+        };
+        schemaProvider.addSchema(SCHEMA_ID, schema);
+        const content = `foo: "bar"`;
+        const result = await parseSetup(content);
+        assert.equal(
+          result.length,
+          0,
+          `Expected no errors, got ${result.length}. Errors: ${JSON.stringify(result.map((r) => r.message))}`
+        );
+      });
+
+      it('draft-2019-09 schema with relative $id and $anchor', async () => {
+        const schema: JSONSchema = {
+          $schema: 'https://json-schema.org/draft/2019-09/schema',
+          $id: 'subschema.json',
+          $defs: {
+            MyType: {
+              $anchor: 'myAnchor',
+              type: 'string',
+            },
+          },
+          properties: {
+            foo: { $ref: '#myAnchor' },
+          },
+        };
+        schemaProvider.addSchema(SCHEMA_ID, schema);
+        const content = `foo: "bar"`;
+        const result = await parseSetup(content);
+        assert.equal(
+          result.length,
+          0,
+          `Expected no errors, got ${result.length}. Errors: ${JSON.stringify(result.map((r) => r.message))}`
+        );
+      });
+
+      it('draft-2020-12 schema with $id and relative $ref', async () => {
+        // Register child schema separately to test relative $ref resolution
+        const childSchema: JSONSchema = {
+          $schema: 'https://json-schema.org/draft/2020-12/schema',
+          $id: 'https://example.com/child.json',
+          type: 'object',
+          properties: {
+            name: { type: 'string' },
+          },
+        };
+        schemaProvider.addSchemaWithUri('child', 'https://example.com/child.json', childSchema);
+
+        const schema: JSONSchema = {
+          $schema: 'https://json-schema.org/draft/2020-12/schema',
+          $id: 'https://example.com/main',
+          properties: {
+            // Relative $ref should resolve relative to $id base URI
+            child: { $ref: 'child.json' },
+          },
+        };
+        schemaProvider.addSchema(SCHEMA_ID, schema);
+        const content = `child:
+  name: "test"`;
+        const result = await parseSetup(content);
+        assert.equal(
+          result.length,
+          0,
+          `Expected no errors, got ${result.length}. Errors: ${JSON.stringify(result.map((r) => r.message))}`
+        );
+      });
+
+      it('draft-2019-09 schema with nested $id scoping', async () => {
+        const schema: JSONSchema = {
+          $schema: 'https://json-schema.org/draft/2019-09/schema',
+          $id: 'https://example.com/root',
+          $defs: {
+            Nested: {
+              $id: 'nested.json',
+              $defs: {
+                Deep: {
+                  $anchor: 'deep',
+                  type: 'number',
+                },
+              },
+              properties: {
+                value: { $ref: '#deep' },
+              },
+            },
+          },
+          properties: {
+            nested: { $ref: '#/$defs/Nested' },
+          },
+        };
+        schemaProvider.addSchema(SCHEMA_ID, schema);
+        const content = `nested:
+  value: 42`;
+        const result = await parseSetup(content);
+        assert.equal(
+          result.length,
+          0,
+          `Expected no errors, got ${result.length}. Errors: ${JSON.stringify(result.map((r) => r.message))}`
+        );
+      });
+
+      it('draft-2020-12 schema with $id and $dynamicAnchor', async () => {
+        const schema: JSONSchema = {
+          $schema: 'https://json-schema.org/draft/2020-12/schema',
+          $id: 'https://example.com/schema',
+          $defs: {
+            Recursive: {
+              $dynamicAnchor: 'recursive',
+              type: 'object',
+              properties: {
+                self: { $dynamicRef: '#recursive' },
+              },
+            },
+          },
+          properties: {
+            item: { $ref: '#/$defs/Recursive' },
+          },
+        };
+        schemaProvider.addSchema(SCHEMA_ID, schema);
+        const content = `item:
+  self:
+    self: {}`;
+        const result = await parseSetup(content);
+        assert.equal(
+          result.length,
+          0,
+          `Expected no errors, got ${result.length}. Errors: ${JSON.stringify(result.map((r) => r.message))}`
+        );
+      });
+    });
   });
 });

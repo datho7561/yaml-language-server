@@ -230,6 +230,28 @@ export class YAMLSchemaService extends JSONSchemaService {
     }
 
     /**
+     * Resolves a relative $id value relative to a base URI
+     * If $id is absolute (starts with scheme://), returns it normalized
+     * If $id is relative, resolves it relative to baseURI
+     */
+    const resolveSchemaId = (schemaId: string | undefined, baseURI: string): string | undefined => {
+      if (!schemaId) {
+        return undefined;
+      }
+      // If $id is absolute (has a scheme), normalize and return it
+      if (/^\w+:\/\/.*/.test(schemaId)) {
+        return this.normalizeId(schemaId);
+      }
+      // If $id is relative, resolve it relative to baseURI
+      if (contextService && baseURI) {
+        const resolved = contextService.resolveRelativePath(schemaId, baseURI);
+        return this.normalizeId(resolved);
+      }
+      // Fallback: normalize as-is
+      return this.normalizeId(schemaId);
+    };
+
+    /**
      * Shared helper functions for traversing schema trees
      */
     const createSchemaTraverser = (
@@ -295,13 +317,21 @@ export class YAMLSchemaService extends JSONSchemaService {
       visited.add(schema);
 
       // Determine the base URI for this schema
+      // If schema has $id, resolve it (handling relative $id values)
+      // Otherwise, use the provided baseURI
       let schemaBaseURI: string;
-      if (preferBaseURI) {
-        // For dynamic anchors, always use baseURI when provided
-        schemaBaseURI = baseURI || (schema.$id ? this.normalizeId(schema.$id) : '');
+      if (schema.$id) {
+        // Resolve $id relative to baseURI (handles both absolute and relative $id)
+        const resolvedId = resolveSchemaId(schema.$id, baseURI);
+        schemaBaseURI = resolvedId || baseURI;
       } else {
-        // For regular and recursive anchors, use $id if present, otherwise inherit
-        schemaBaseURI = schema.$id ? this.normalizeId(schema.$id) : baseURI;
+        schemaBaseURI = baseURI;
+      }
+
+      // For dynamic anchors with preferBaseURI=true, always use baseURI when provided
+      // This ensures consistency with how merge() looks up anchors
+      if (preferBaseURI && baseURI) {
+        schemaBaseURI = baseURI;
       }
 
       // Register anchor based on type
@@ -617,12 +647,19 @@ export class YAMLSchemaService extends JSONSchemaService {
         return null;
       }
 
+      // Determine the effective base URI for this schema
+      // If parentSchema has $id, use it (resolved relative to parentSchemaURL)
+      // Otherwise, use parentSchemaURL
+      const effectiveBaseURI = parentSchema.$id
+        ? resolveSchemaId(parentSchema.$id, parentSchemaURL) || parentSchemaURL
+        : parentSchemaURL;
+
       // Build anchor registry if not provided
-      const registry = anchorRegistry || buildAnchorRegistry(parentSchema, parentSchemaURL);
+      const registry = anchorRegistry || buildAnchorRegistry(parentSchema, effectiveBaseURI);
       // Build recursive anchor registry if not provided
-      const recursiveRegistry = recursiveAnchorRegistry || buildRecursiveAnchorRegistry(parentSchema, parentSchemaURL);
+      const recursiveRegistry = recursiveAnchorRegistry || buildRecursiveAnchorRegistry(parentSchema, effectiveBaseURI);
       // Build dynamic anchor registry if not provided
-      const dynamicRegistry = dynamicAnchorRegistry || buildDynamicAnchorRegistry(parentSchema, parentSchemaURL);
+      const dynamicRegistry = dynamicAnchorRegistry || buildDynamicAnchorRegistry(parentSchema, effectiveBaseURI);
 
       const toWalk: JSONSchema[] = [node];
       const seen: Set<JSONSchema> = new Set();
@@ -668,6 +705,8 @@ export class YAMLSchemaService extends JSONSchemaService {
       };
       const handleRef = (next: JSONSchema): void => {
         const seenRefs = new Set();
+        // Determine base URI for this schema node: use $id if present (resolved relative to effectiveBaseURI), otherwise use effectiveBaseURI
+        const currentBaseURI = next.$id ? resolveSchemaId(next.$id, effectiveBaseURI) || effectiveBaseURI : effectiveBaseURI;
         // Handle $ref (static reference)
         while (next.$ref) {
           const ref = decodeURIComponent(next.$ref);
@@ -676,12 +715,17 @@ export class YAMLSchemaService extends JSONSchemaService {
           next._$ref = next.$ref;
           delete next.$ref;
           if (segments[0].length > 0) {
+            // Resolve relative URI relative to current schema's base URI (from $id if present)
+            let refURI = segments[0];
+            if (contextService && !/^\w+:\/\/.*/.test(refURI)) {
+              refURI = contextService.resolveRelativePath(refURI, currentBaseURI);
+            }
             openPromises.push(
               resolveExternalLink(
                 next,
-                segments[0],
+                refURI,
                 segments[1],
-                parentSchemaURL,
+                currentBaseURI,
                 parentSchemaDependencies,
                 registry,
                 recursiveRegistry,
@@ -691,7 +735,7 @@ export class YAMLSchemaService extends JSONSchemaService {
             return;
           } else {
             if (!seenRefs.has(ref)) {
-              merge(next, parentSchema, parentSchemaURL, segments[1], registry, recursiveRegistry, dynamicRegistry); // can set next.$ref again, use seenRefs to avoid circle
+              merge(next, parentSchema, currentBaseURI, segments[1], registry, recursiveRegistry, dynamicRegistry); // can set next.$ref again, use seenRefs to avoid circle
               seenRefs.add(ref);
             }
           }
@@ -703,12 +747,17 @@ export class YAMLSchemaService extends JSONSchemaService {
           next._$ref = next.$recursiveRef;
           delete next.$recursiveRef;
           if (segments[0].length > 0) {
+            // Resolve relative URI relative to current schema's base URI (from $id if present)
+            let refURI = segments[0];
+            if (contextService && !/^\w+:\/\/.*/.test(refURI)) {
+              refURI = contextService.resolveRelativePath(refURI, currentBaseURI);
+            }
             openPromises.push(
               resolveExternalLink(
                 next,
-                segments[0],
+                refURI,
                 segments[1],
-                parentSchemaURL,
+                currentBaseURI,
                 parentSchemaDependencies,
                 registry,
                 recursiveRegistry,
@@ -733,7 +782,7 @@ export class YAMLSchemaService extends JSONSchemaService {
                   registry,
                   recursiveRegistry,
                   dynamicRegistry,
-                  parentSchemaURL
+                  currentBaseURI
                 );
                 if (recursiveSchema) {
                   // Merge the recursive anchor schema into the current schema
@@ -815,7 +864,7 @@ export class YAMLSchemaService extends JSONSchemaService {
                   registry,
                   recursiveRegistry,
                   dynamicRegistry,
-                  parentSchemaURL
+                  currentBaseURI
                 );
                 if (dynamicSchema) {
                   // Merge the dynamic anchor schema into the current schema
