@@ -335,10 +335,27 @@ export class YAMLSchemaService extends JSONSchemaService {
       }
 
       // Register anchor based on type
-      if (anchorType === 'anchor' && schema.$anchor && typeof schema.$anchor === 'string') {
-        const anchorKey = schemaBaseURI + '#' + schema.$anchor;
-        registry.set(anchorKey, schema);
-        registry.set('#' + schema.$anchor, schema);
+      if (anchorType === 'anchor') {
+        // Draft-2019-09/2020-12: $anchor keyword
+        if (schema.$anchor && typeof schema.$anchor === 'string') {
+          const anchorKey = schemaBaseURI + '#' + schema.$anchor;
+          registry.set(anchorKey, schema);
+          registry.set('#' + schema.$anchor, schema);
+        }
+        // Draft-07/2019-09/2020-12: $id with fragment identifier creates an anchor
+        // Example: $id: "#A" creates an anchor that can be referenced with $ref: "#A"
+        // Note: In draft-2019-09 and later, $anchor is preferred, but $id fragments are still supported
+        // for backward compatibility (see https://json-schema.org/draft/2019-09/json-schema-core.html#rfc.section.8.2.3)
+        if (schema.$id && typeof schema.$id === 'string' && schema.$id.startsWith('#')) {
+          const anchorName = schema.$id.substring(1); // Remove the '#' prefix
+          if (anchorName) {
+            // Use the parent baseURI (not the resolved $id) for the anchor key
+            // This matches how JSON Schema works: the anchor is scoped to the parent schema
+            const anchorKey = baseURI + '#' + anchorName;
+            registry.set(anchorKey, schema);
+            registry.set('#' + anchorName, schema);
+          }
+        }
       } else if (anchorType === 'recursiveAnchor' && schema.$recursiveAnchor !== undefined) {
         if (typeof schema.$recursiveAnchor === 'boolean' && schema.$recursiveAnchor === true) {
           // Draft-07: anonymous recursive anchor

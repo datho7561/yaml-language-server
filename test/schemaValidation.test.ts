@@ -3463,5 +3463,128 @@ extraProp: "not allowed"`;
         );
       });
     });
+
+    describe('Issue #823: $ref to $id anchor (draft-07)', () => {
+      it('draft-07 schema with $id anchor and $ref', async () => {
+        // Test case from https://github.com/redhat-developer/yaml-language-server/issues/823
+        const schema: JSONSchema = {
+          $schema: 'http://json-schema.org/draft-07/schema',
+          type: 'object',
+          properties: {
+            A: { $id: '#A', type: 'string' },
+            B: { $ref: '#A' },
+          },
+        };
+        schemaProvider.addSchema(SCHEMA_ID, schema);
+        const content = `A: foo
+B: bar`;
+        const result = await parseSetup(content);
+        assert.equal(
+          result.length,
+          0,
+          `Expected no errors, got ${result.length}. Errors: ${JSON.stringify(result.map((r) => r.message))}`
+        );
+      });
+
+      it('draft-07 schema with $id anchor validation error', async () => {
+        const schema: JSONSchema = {
+          $schema: 'http://json-schema.org/draft-07/schema',
+          type: 'object',
+          properties: {
+            StringType: { $id: '#StringType', type: 'string', minLength: 5 },
+            value: { $ref: '#StringType' },
+          },
+        };
+        schemaProvider.addSchema(SCHEMA_ID, schema);
+        const content = `value: "abc"`; // Too short
+        const result = await parseSetup(content);
+        assert.equal(
+          result.length,
+          1,
+          `Expected 1 error, got ${result.length}. Errors: ${JSON.stringify(result.map((r) => r.message))}`
+        );
+        assert.equal(result[0].severity, DiagnosticSeverity.Error, `Error severity should be Error. Got: ${result[0].severity}`);
+        assert.equal(
+          result[0].message,
+          'String is shorter than the minimum length of 5.',
+          `Expected exact error message. Got: ${result[0].message}`
+        );
+      });
+
+      it('draft-07 schema with $id anchor in nested properties', async () => {
+        const schema: JSONSchema = {
+          $schema: 'http://json-schema.org/draft-07/schema',
+          type: 'object',
+          properties: {
+            person: {
+              type: 'object',
+              properties: {
+                name: { $id: '#name', type: 'string' },
+                age: { $id: '#age', type: 'number' },
+              },
+              required: ['name', 'age'],
+            },
+            nameRef: { $ref: '#name' },
+            ageRef: { $ref: '#age' },
+          },
+        };
+        schemaProvider.addSchema(SCHEMA_ID, schema);
+        const content = `person:
+  name: "John"
+  age: 30
+nameRef: "Jane"
+ageRef: 25`;
+        const result = await parseSetup(content);
+        assert.equal(
+          result.length,
+          0,
+          `Expected no errors, got ${result.length}. Errors: ${JSON.stringify(result.map((r) => r.message))}`
+        );
+      });
+
+      it('draft-2019-09 schema with $id fragment identifier (backward compatibility)', async () => {
+        // In draft-2019-09, $id with fragment identifier should still work for backward compatibility
+        // though $anchor is preferred
+        const schema: JSONSchema = {
+          $schema: 'https://json-schema.org/draft/2019-09/schema',
+          type: 'object',
+          properties: {
+            A: { $id: '#A', type: 'string' },
+            B: { $ref: '#A' },
+          },
+        };
+        schemaProvider.addSchema(SCHEMA_ID, schema);
+        const content = `A: foo
+B: bar`;
+        const result = await parseSetup(content);
+        assert.equal(
+          result.length,
+          0,
+          `Expected no errors, got ${result.length}. Errors: ${JSON.stringify(result.map((r) => r.message))}`
+        );
+      });
+
+      it('draft-2020-12 schema with $id fragment identifier (backward compatibility)', async () => {
+        // In draft-2020-12, $id with fragment identifier should still work for backward compatibility
+        // though $anchor is preferred
+        const schema: JSONSchema = {
+          $schema: 'https://json-schema.org/draft/2020-12/schema',
+          type: 'object',
+          properties: {
+            A: { $id: '#A', type: 'string' },
+            B: { $ref: '#A' },
+          },
+        };
+        schemaProvider.addSchema(SCHEMA_ID, schema);
+        const content = `A: foo
+B: bar`;
+        const result = await parseSetup(content);
+        assert.equal(
+          result.length,
+          0,
+          `Expected no errors, got ${result.length}. Errors: ${JSON.stringify(result.map((r) => r.message))}`
+        );
+      });
+    });
   });
 });
