@@ -70,7 +70,16 @@ describe('Validation Tests', () => {
   }
 
   afterEach(() => {
-    schemaProvider.deleteSchema(SCHEMA_ID);
+    // Clear all schemas from the provider to ensure test isolation
+    // This prevents schemas from one test (e.g., external schemas registered with addSchemaWithUri)
+    // from interfering with subsequent tests
+    const allSchemaUris = schemaProvider.getAllSchemaUris();
+    schemaProvider.clearAll();
+    // Reset cached schemas in the language service for all registered schema URIs
+    // This ensures that when schemas are re-registered, they're loaded fresh
+    allSchemaUris.forEach((uri) => {
+      languageService.resetSchema(uri);
+    });
   });
 
   describe('Boolean tests', () => {
@@ -2318,5 +2327,1330 @@ obj:
     const content = `myProperty:\n  foo: bar\n  multipleOf: 1`;
     const result = await parseSetup(content);
     assert.equal(result.length, 0);
+  });
+
+  describe('JSON Schema Draft 2019-09', () => {
+    it('draft-2019-09 schema with prefixItems', async () => {
+      const schema: JSONSchema = {
+        $schema: 'https://json-schema.org/draft/2019-09/schema',
+        type: 'array',
+        prefixItems: [{ type: 'string' }, { type: 'number' }],
+      };
+      schemaProvider.addSchema(SCHEMA_ID, schema);
+      const content = `- "hello"\n- 42`;
+      const result = await parseSetup(content);
+      assert.equal(result.length, 0);
+    });
+
+    it('draft-2019-09 schema with prefixItems and unevaluatedItems', async () => {
+      const schema: JSONSchema = {
+        $schema: 'https://json-schema.org/draft/2019-09/schema',
+        type: 'array',
+        prefixItems: [{ type: 'string' }, { type: 'number' }],
+        unevaluatedItems: { type: 'boolean' },
+      };
+      schemaProvider.addSchema(SCHEMA_ID, schema);
+      const content = `- "hello"\n- 42\n- true`;
+      const result = await parseSetup(content);
+      assert.equal(result.length, 0);
+    });
+
+    it('draft-2019-09 schema with prefixItems and unevaluatedItems: false', async () => {
+      const schema: JSONSchema = {
+        $schema: 'https://json-schema.org/draft/2019-09/schema',
+        type: 'array',
+        prefixItems: [{ type: 'string' }, { type: 'number' }],
+        unevaluatedItems: false,
+      };
+      schemaProvider.addSchema(SCHEMA_ID, schema);
+      const content = `- "hello"\n- 42\n- extra`;
+      const result = await parseSetup(content);
+      assert.equal(
+        1,
+        result.length,
+        `Expected exactly 1 error, got ${result.length}. Errors: ${JSON.stringify(result.map((r) => r.message))}`
+      );
+      assert.equal('Array has too many items according to schema. Expected 2 or fewer.', result[0].message);
+      assert.equal(result[0].severity, DiagnosticSeverity.Error);
+    });
+
+    it('draft-2019-09 schema with unevaluatedProperties', async () => {
+      const schema: JSONSchema = {
+        $schema: 'https://json-schema.org/draft/2019-09/schema',
+        type: 'object',
+        properties: {
+          name: { type: 'string' },
+        },
+        unevaluatedProperties: { type: 'string' },
+      };
+      schemaProvider.addSchema(SCHEMA_ID, schema);
+      const content = `name: "test"\nextra: "allowed"`;
+      const result = await parseSetup(content);
+      assert.strictEqual(result.length, 0, 'Valid object with unevaluatedProperties should have no errors');
+    });
+
+    it('draft-2019-09 schema with unevaluatedProperties - type error for extra property', async () => {
+      const schema: JSONSchema = {
+        $schema: 'https://json-schema.org/draft/2019-09/schema',
+        type: 'object',
+        properties: {
+          name: { type: 'string' },
+        },
+        unevaluatedProperties: { type: 'string' },
+      };
+      schemaProvider.addSchema(SCHEMA_ID, schema);
+      const content = `name: "test"\nextra: 123`;
+      const result = await parseSetup(content);
+      assert.equal(1, result.length, `Expected exactly 1 error, got ${result}`);
+      assert.equal('Incorrect type. Expected "string".', result[0].message);
+      assert.equal(result[0].severity, DiagnosticSeverity.Error);
+    });
+
+    it('draft-2019-09 schema with unevaluatedProperties: false', async () => {
+      const schema: JSONSchema = {
+        $schema: 'https://json-schema.org/draft/2019-09/schema',
+        type: 'object',
+        properties: {
+          name: { type: 'string' },
+        },
+        unevaluatedProperties: false,
+      };
+      schemaProvider.addSchema(SCHEMA_ID, schema);
+      const content = `name: "test"\nextra: "not allowed"`;
+      const result = await parseSetup(content);
+      assert.equal(1, result.length, `Expected exactly 1 error, got ${result}`);
+      assert.equal('Property extra is not allowed.', result[0].message);
+      assert.equal(result[0].severity, DiagnosticSeverity.Error);
+    });
+
+    it('draft-2019-09 schema with $defs', async () => {
+      const schema: JSONSchema = {
+        $schema: 'https://json-schema.org/draft/2019-09/schema',
+        type: 'object',
+        properties: {
+          myProperty: {
+            $ref: '#/$defs/MyType',
+          },
+        },
+        $defs: {
+          MyType: {
+            type: 'object',
+            properties: {
+              foo: { type: 'string' },
+            },
+          },
+        },
+      };
+      schemaProvider.addSchema(SCHEMA_ID, schema);
+      const content = `myProperty:\n  foo: bar`;
+      const result = await parseSetup(content);
+      assert.equal(result.length, 0);
+    });
+
+    it('draft-2019-09 schema with items as schema (not array)', async () => {
+      const schema: JSONSchema = {
+        $schema: 'https://json-schema.org/draft/2019-09/schema',
+        type: 'array',
+        items: { type: 'string' },
+      };
+      schemaProvider.addSchema(SCHEMA_ID, schema);
+      const content = `- "hello"\n- "world"`;
+      const result = await parseSetup(content);
+      assert.equal(result.length, 0);
+    });
+  });
+
+  describe('JSON Schema Draft 2020-12', () => {
+    it('draft-2020-12 schema with prefixItems (required)', async () => {
+      const schema: JSONSchema = {
+        $schema: 'https://json-schema.org/draft/2020-12/schema',
+        type: 'array',
+        prefixItems: [{ type: 'string' }, { type: 'number' }],
+      };
+      schemaProvider.addSchema(SCHEMA_ID, schema);
+      const content = `- "hello"\n- 42`;
+      const result = await parseSetup(content);
+      assert.equal(result.length, 0);
+    });
+
+    it('draft-2020-12 schema with prefixItems and unevaluatedItems', async () => {
+      const schema: JSONSchema = {
+        $schema: 'https://json-schema.org/draft/2020-12/schema',
+        type: 'array',
+        prefixItems: [{ type: 'string' }, { type: 'number' }],
+        unevaluatedItems: { type: 'boolean' },
+      };
+      schemaProvider.addSchema(SCHEMA_ID, schema);
+      const content = `- "hello"\n- 42\n- true`;
+      const result = await parseSetup(content);
+      assert.equal(result.length, 0);
+    });
+
+    it('draft-2020-12 schema with items as schema only', async () => {
+      const schema: JSONSchema = {
+        $schema: 'https://json-schema.org/draft/2020-12/schema',
+        type: 'array',
+        items: { type: 'string' },
+      };
+      schemaProvider.addSchema(SCHEMA_ID, schema);
+      const content = `- "hello"\n- "world"`;
+      const result = await parseSetup(content);
+      assert.equal(result.length, 0);
+    });
+
+    it('draft-2020-12 schema rejects array form of items', async () => {
+      const schema: JSONSchema = {
+        $schema: 'https://json-schema.org/draft/2020-12/schema',
+        type: 'array',
+        items: [{ type: 'string' }, { type: 'number' }] as unknown as JSONSchema,
+      };
+      schemaProvider.addSchema(SCHEMA_ID, schema);
+      const content = `- "hello"\n- 42`;
+      const result = await parseSetup(content);
+      // Should have validation error about items being array
+      assert.equal(1, result.length, `Expected exactly 1 error, got ${result}`);
+      // Check the error about items array in 2020-12
+      assert.equal('In JSON Schema 2020-12, items cannot be an array. Use prefixItems instead.', result[0].message);
+      assert.equal(result[0].severity, DiagnosticSeverity.Error);
+    });
+
+    it('draft-2020-12 schema with unevaluatedProperties', async () => {
+      const schema: JSONSchema = {
+        $schema: 'https://json-schema.org/draft/2020-12/schema',
+        type: 'object',
+        properties: {
+          name: { type: 'string' },
+        },
+        unevaluatedProperties: { type: 'string' },
+      };
+      schemaProvider.addSchema(SCHEMA_ID, schema);
+      const content = `name: "test"\nextra: "allowed"`;
+      const result = await parseSetup(content);
+      assert.equal(result.length, 0);
+    });
+
+    it('draft-2020-12 schema with $defs', async () => {
+      const schema: JSONSchema = {
+        $schema: 'https://json-schema.org/draft/2020-12/schema',
+        type: 'object',
+        properties: {
+          myProperty: {
+            $ref: '#/$defs/MyType',
+          },
+        },
+        $defs: {
+          MyType: {
+            type: 'object',
+            properties: {
+              foo: { type: 'string' },
+            },
+          },
+        },
+      };
+      schemaProvider.addSchema(SCHEMA_ID, schema);
+      const content = `myProperty:\n  foo: bar`;
+      const result = await parseSetup(content);
+      assert.equal(result.length, 0);
+    });
+
+    it('draft-2020-12 schema validation errors', async () => {
+      const schema: JSONSchema = {
+        $schema: 'https://json-schema.org/draft/2020-12/schema',
+        type: 'object',
+        properties: {
+          name: { type: 'string' },
+        },
+        unevaluatedProperties: false,
+      };
+      schemaProvider.addSchema(SCHEMA_ID, schema);
+      const content = `name: "test"\nextra: "not allowed"`;
+      const result = await parseSetup(content);
+      assert.equal(1, result.length, `Expected exactly 1 error, got ${result.length}`);
+      assert.equal('Property extra is not allowed.', result[0].message);
+      assert.equal(result[0].severity, DiagnosticSeverity.Error);
+    });
+
+    it('draft-2020-12 schema with prefixItems and extra items (unevaluatedItems: false)', async () => {
+      const schema: JSONSchema = {
+        $schema: 'https://json-schema.org/draft/2020-12/schema',
+        type: 'array',
+        prefixItems: [{ type: 'string' }, { type: 'number' }],
+        unevaluatedItems: false,
+      };
+      schemaProvider.addSchema(SCHEMA_ID, schema);
+      const content = `- "hello"\n- 42\n- extra`;
+      const result = await parseSetup(content);
+      assert.equal(1, result.length, `Expected exactly 1 error, got ${result.length}`);
+      assert.equal('Array has too many items according to schema. Expected 2 or fewer.', result[0].message);
+      assert.equal(result[0].severity, DiagnosticSeverity.Error);
+    });
+
+    it('draft-2019-09 schema with $anchor reference', async () => {
+      const schema: JSONSchema = {
+        $schema: 'https://json-schema.org/draft/2019-09/schema',
+        type: 'object',
+        $defs: {
+          MyType: {
+            $anchor: 'myAnchor',
+            type: 'string',
+          },
+        },
+        properties: {
+          foo: { $ref: '#myAnchor' },
+        },
+      };
+      schemaProvider.addSchema(SCHEMA_ID, schema);
+      const content = `foo: "bar"`;
+      const result = await parseSetup(content);
+      assert.equal(
+        result.length,
+        0,
+        `Expected no errors, got ${result.length}. Errors: ${JSON.stringify(result.map((r) => r.message))}`
+      );
+    });
+
+    it('draft-2020-12 schema with $anchor reference', async () => {
+      const schema: JSONSchema = {
+        $schema: 'https://json-schema.org/draft/2020-12/schema',
+        type: 'object',
+        $defs: {
+          MyType: {
+            $anchor: 'myAnchor',
+            type: 'string',
+          },
+        },
+        properties: {
+          foo: { $ref: '#myAnchor' },
+        },
+      };
+      schemaProvider.addSchema(SCHEMA_ID, schema);
+      const content = `foo: "bar"`;
+      const result = await parseSetup(content);
+      assert.equal(
+        result.length,
+        0,
+        `Expected no errors, got ${result.length}. Errors: ${JSON.stringify(result.map((r) => r.message))}`
+      );
+    });
+
+    it('draft-2019-09 schema with $anchor in nested $defs', async () => {
+      const schema: JSONSchema = {
+        $schema: 'https://json-schema.org/draft/2019-09/schema',
+        type: 'object',
+        $defs: {
+          nested: {
+            $defs: {
+              DeepType: {
+                $anchor: 'deepAnchor',
+                type: 'number',
+              },
+            },
+          },
+        },
+        properties: {
+          value: { $ref: '#deepAnchor' },
+        },
+      };
+      schemaProvider.addSchema(SCHEMA_ID, schema);
+      const content = `value: 42`;
+      const result = await parseSetup(content);
+      assert.equal(
+        result.length,
+        0,
+        `Expected no errors, got ${result.length}. Errors: ${JSON.stringify(result.map((r) => r.message))}`
+      );
+    });
+
+    it('draft-2019-09 schema with $anchor and $id', async () => {
+      const schema: JSONSchema = {
+        $schema: 'https://json-schema.org/draft/2019-09/schema',
+        $id: 'https://example.com/schema',
+        type: 'object',
+        $defs: {
+          MyType: {
+            $anchor: 'myAnchor',
+            type: 'string',
+          },
+        },
+        properties: {
+          foo: { $ref: '#myAnchor' },
+        },
+      };
+      schemaProvider.addSchema(SCHEMA_ID, schema);
+      const content = `foo: "bar"`;
+      const result = await parseSetup(content);
+      assert.equal(
+        result.length,
+        0,
+        `Expected no errors, got ${result.length}. Errors: ${JSON.stringify(result.map((r) => r.message))}`
+      );
+    });
+
+    it('draft-2019-09 schema with $anchor validation error', async () => {
+      const schema: JSONSchema = {
+        $schema: 'https://json-schema.org/draft/2019-09/schema',
+        type: 'object',
+        $defs: {
+          MyType: {
+            $anchor: 'myAnchor',
+            type: 'string',
+          },
+        },
+        properties: {
+          foo: { $ref: '#myAnchor' },
+        },
+      };
+      schemaProvider.addSchema(SCHEMA_ID, schema);
+      const content = `foo: 123`;
+      const result = await parseSetup(content);
+      assert.equal(
+        1,
+        result.length,
+        `Expected exactly 1 error, got ${result.length}. Errors: ${JSON.stringify(result.map((r) => r.message))}`
+      );
+      assert.equal('Incorrect type. Expected "string".', result[0].message);
+      assert.equal(result[0].severity, DiagnosticSeverity.Error);
+    });
+
+    it('draft-2019-09 schema with invalid $anchor reference', async () => {
+      const schema: JSONSchema = {
+        $schema: 'https://json-schema.org/draft/2019-09/schema',
+        type: 'object',
+        properties: {
+          foo: { $ref: '#nonexistentAnchor' },
+        },
+      };
+      schemaProvider.addSchema(SCHEMA_ID, schema);
+      const content = `foo: "bar"`;
+      const result = await parseSetup(content);
+      assert.equal(
+        1,
+        result.length,
+        `Expected exactly 1 error, got ${result.length}. Errors: ${JSON.stringify(result.map((r) => r.message))}`
+      );
+      assert.equal(result[0].message, "$ref 'nonexistentAnchor' in 'file:///default_schema_id.yaml' can not be resolved.");
+      assert.equal(result[0].severity, DiagnosticSeverity.Error);
+    });
+
+    describe('$recursiveRef and $recursiveAnchor support', () => {
+      it('draft-07 schema with $recursiveAnchor and $recursiveRef', async () => {
+        const schema: JSONSchema = {
+          $schema: 'http://json-schema.org/draft-07/schema',
+          type: 'object',
+          $recursiveAnchor: true,
+          properties: {
+            name: { type: 'string' },
+            children: {
+              type: 'array',
+              items: { $recursiveRef: '#' },
+            },
+          },
+        };
+        schemaProvider.addSchema(SCHEMA_ID, schema);
+        const content = `name: "parent"
+children:
+  - name: "child1"
+    children: []
+  - name: "child2"`;
+        const result = await parseSetup(content);
+        assert.equal(
+          result.length,
+          0,
+          `Expected no errors, got ${result.length}. Errors: ${JSON.stringify(result.map((r) => r.message))}`
+        );
+      });
+
+      it('draft-2019-09 schema with named $recursiveAnchor and $recursiveRef', async () => {
+        const schema: JSONSchema = {
+          $schema: 'https://json-schema.org/draft/2019-09/schema',
+          type: 'object',
+          $defs: {
+            TreeNode: {
+              $recursiveAnchor: 'tree',
+              type: 'object',
+              properties: {
+                name: { type: 'string' },
+                children: {
+                  type: 'array',
+                  items: { $recursiveRef: '#tree' },
+                },
+              },
+            },
+          },
+          allOf: [{ $ref: '#/$defs/TreeNode' }],
+        };
+        schemaProvider.addSchema(SCHEMA_ID, schema);
+        const content = `name: "parent"
+children:
+  - name: "child1"
+    children: []
+  - name: "child2"`;
+        const result = await parseSetup(content);
+        assert.equal(
+          result.length,
+          0,
+          `Expected no errors, got ${result.length}. Errors: ${JSON.stringify(result.map((r) => r.message))}`
+        );
+      });
+
+      it('draft-07 schema with $recursiveRef validation error', async () => {
+        const schema: JSONSchema = {
+          $schema: 'http://json-schema.org/draft-07/schema',
+          type: 'object',
+          $recursiveAnchor: true,
+          properties: {
+            name: { type: 'string' },
+            children: {
+              type: 'array',
+              items: { $recursiveRef: '#' },
+            },
+          },
+        };
+        schemaProvider.addSchema(SCHEMA_ID, schema);
+        const content = `name: 123
+children: []`;
+        const result = await parseSetup(content);
+        assert.equal(
+          1,
+          result.length,
+          `Expected exactly 1 error, got ${result.length}. Errors: ${JSON.stringify(result.map((r) => r.message))}`
+        );
+        assert.equal('Incorrect type. Expected "string".', result[0].message);
+        assert.equal(result[0].severity, DiagnosticSeverity.Error);
+      });
+
+      it('draft-2019-09 schema with $recursiveRef in $defs', async () => {
+        const schema: JSONSchema = {
+          $schema: 'https://json-schema.org/draft/2019-09/schema',
+          type: 'object',
+          $defs: {
+            TreeNode: {
+              $recursiveAnchor: 'node',
+              type: 'object',
+              properties: {
+                value: { type: 'string' },
+                children: {
+                  type: 'array',
+                  items: { $recursiveRef: '#node' },
+                },
+              },
+            },
+          },
+          allOf: [{ $ref: '#/$defs/TreeNode' }],
+        };
+        schemaProvider.addSchema(SCHEMA_ID, schema);
+        const content = `value: "root"
+children:
+  - value: "child1"
+    children: []
+  - value: "child2"
+    children:
+      - value: "grandchild"`;
+        const result = await parseSetup(content);
+        assert.equal(
+          result.length,
+          0,
+          `Expected no errors, got ${result.length}. Errors: ${JSON.stringify(result.map((r) => r.message))}`
+        );
+      });
+
+      it('draft-2019-09 schema with invalid $recursiveRef', async () => {
+        const schema: JSONSchema = {
+          $schema: 'https://json-schema.org/draft/2019-09/schema',
+          type: 'object',
+          properties: {
+            foo: { $recursiveRef: '#nonexistent' },
+          },
+        };
+        schemaProvider.addSchema(SCHEMA_ID, schema);
+        const content = `foo: "bar"`;
+        const result = await parseSetup(content);
+        assert.equal(
+          1,
+          result.length,
+          `Expected exactly 1 error, got ${result.length}. Errors: ${JSON.stringify(result.map((r) => r.message))}`
+        );
+        assert.equal(result[0].message, "$ref '#nonexistent' in 'file:///default_schema_id.yaml' can not be resolved.");
+        assert.equal(result[0].severity, DiagnosticSeverity.Error);
+      });
+
+      it('draft-07 schema with $recursiveRef to external schema', async () => {
+        const externalSchema: JSONSchema = {
+          $schema: 'http://json-schema.org/draft-07/schema',
+          $id: 'http://example.com/tree',
+          $recursiveAnchor: true,
+          type: 'object',
+          properties: {
+            name: { type: 'string' },
+            children: {
+              type: 'array',
+              items: { $recursiveRef: '#' },
+            },
+          },
+        };
+        const mainSchema: JSONSchema = {
+          $schema: 'http://json-schema.org/draft-07/schema',
+          type: 'object',
+          properties: {
+            tree: { $recursiveRef: 'http://example.com/tree#' },
+          },
+        };
+        // Register external schema first with proper URI
+        schemaProvider.addSchemaWithUri('tree', 'http://example.com/tree', externalSchema);
+        schemaProvider.addSchema(SCHEMA_ID, mainSchema);
+        const content = `tree:
+  name: "root"
+  children:
+    - name: "child"`;
+        const result = await parseSetup(content);
+        assert.equal(
+          result.length,
+          0,
+          `Expected no errors, got ${result.length}. Errors: ${JSON.stringify(result.map((r) => r.message))}`
+        );
+      });
+    });
+
+    describe('$dynamicAnchor and $dynamicRef support', () => {
+      it('draft-2020-12 schema with $dynamicAnchor and $dynamicRef', async () => {
+        const schema: JSONSchema = {
+          $schema: 'https://json-schema.org/draft/2020-12/schema',
+          type: 'object',
+          $dynamicAnchor: 'tree',
+          properties: {
+            name: { type: 'string' },
+            children: {
+              type: 'array',
+              items: { $dynamicRef: '#tree' },
+            },
+          },
+        };
+        schemaProvider.addSchema(SCHEMA_ID, schema);
+        const content = `name: "parent"
+children:
+  - name: "child1"
+    children: []
+  - name: "child2"`;
+        const result = await parseSetup(content);
+        assert.equal(
+          result.length,
+          0,
+          `Expected no errors, got ${result.length}. Errors: ${JSON.stringify(result.map((r) => r.message))}`
+        );
+      });
+
+      it('draft-2020-12 schema with named $dynamicAnchor in $defs', async () => {
+        const schema: JSONSchema = {
+          $schema: 'https://json-schema.org/draft/2020-12/schema',
+          type: 'object',
+          $defs: {
+            TreeNode: {
+              $dynamicAnchor: 'node',
+              type: 'object',
+              properties: {
+                value: { type: 'string' },
+                children: {
+                  type: 'array',
+                  items: { $dynamicRef: '#node' },
+                },
+              },
+            },
+          },
+          allOf: [{ $ref: '#/$defs/TreeNode' }],
+        };
+        schemaProvider.addSchema(SCHEMA_ID, schema);
+        const content = `value: "root"
+children:
+  - value: "child1"
+    children: []
+  - value: "child2"
+    children:
+      - value: "grandchild"`;
+        const result = await parseSetup(content);
+        assert.equal(
+          result.length,
+          0,
+          `Expected no errors, got ${result.length}. Errors: ${JSON.stringify(result.map((r) => r.message))}`
+        );
+      });
+
+      it('draft-2020-12 schema with $dynamicRef validation error', async () => {
+        const schema: JSONSchema = {
+          $schema: 'https://json-schema.org/draft/2020-12/schema',
+          type: 'object',
+          $dynamicAnchor: 'tree',
+          properties: {
+            name: { type: 'string' },
+            children: {
+              type: 'array',
+              items: { $dynamicRef: '#tree' },
+            },
+          },
+        };
+        schemaProvider.addSchema(SCHEMA_ID, schema);
+        const content = `name: 123
+children: []`;
+        const result = await parseSetup(content);
+        assert.equal(
+          1,
+          result.length,
+          `Expected exactly 1 error, got ${result.length}. Errors: ${JSON.stringify(result.map((r) => r.message))}`
+        );
+        assert.equal('Incorrect type. Expected "string".', result[0].message);
+        assert.equal(result[0].severity, DiagnosticSeverity.Error);
+      });
+
+      it('draft-2020-12 schema with nested $dynamicAnchor', async () => {
+        const schema: JSONSchema = {
+          $schema: 'https://json-schema.org/draft/2020-12/schema',
+          type: 'object',
+          $defs: {
+            InnerNode: {
+              $dynamicAnchor: 'inner',
+              type: 'object',
+              properties: {
+                data: { type: 'string' },
+                nested: {
+                  type: 'array',
+                  items: { $dynamicRef: '#inner' },
+                },
+              },
+            },
+            OuterNode: {
+              $dynamicAnchor: 'outer',
+              type: 'object',
+              properties: {
+                inner: { $ref: '#/$defs/InnerNode' },
+                outerRef: { $dynamicRef: '#outer' },
+              },
+            },
+          },
+          allOf: [{ $ref: '#/$defs/OuterNode' }],
+        };
+        schemaProvider.addSchema(SCHEMA_ID, schema);
+        const content = `inner:
+  data: "inner data"
+  nested:
+    - data: "nested data"
+outerRef:
+  inner:
+    data: "another inner"`;
+        const result = await parseSetup(content);
+        assert.equal(
+          result.length,
+          0,
+          `Expected no errors, got ${result.length}. Errors: ${JSON.stringify(result.map((r) => r.message))}`
+        );
+      });
+
+      it('draft-2020-12 schema with invalid $dynamicRef', async () => {
+        const schema: JSONSchema = {
+          $schema: 'https://json-schema.org/draft/2020-12/schema',
+          type: 'object',
+          properties: {
+            foo: { $dynamicRef: '#nonexistent' },
+          },
+        };
+        schemaProvider.addSchema(SCHEMA_ID, schema);
+        const content = `foo: "bar"`;
+        const result = await parseSetup(content);
+        assert.equal(
+          1,
+          result.length,
+          `Expected exactly 1 error, got ${result.length}. Errors: ${JSON.stringify(result.map((r) => r.message))}`
+        );
+        assert.equal(result[0].message, "$ref '#nonexistent' in 'file:///default_schema_id.yaml' can not be resolved.");
+        assert.equal(result[0].severity, DiagnosticSeverity.Error);
+      });
+
+      it('draft-2020-12 schema with $dynamicRef to external schema', async () => {
+        const externalSchemaUri = 'http://example.com/tree';
+        const externalSchema: JSONSchema = {
+          $schema: 'https://json-schema.org/draft/2020-12/schema',
+          $id: 'http://example.com/tree',
+          $dynamicAnchor: 'tree',
+          type: 'object',
+          properties: {
+            name: { type: 'string' },
+            children: {
+              type: 'array',
+              items: { $dynamicRef: '#tree' },
+            },
+          },
+        };
+        const mainSchema: JSONSchema = {
+          $schema: 'https://json-schema.org/draft/2020-12/schema',
+          type: 'object',
+          properties: {
+            tree: { $dynamicRef: 'http://example.com/tree#tree' },
+          },
+        };
+        // Register external schema first with proper URI
+        // Note: afterEach now clears all schemas from the provider and resets cached schemas,
+        // so we don't need to manually delete or reset here
+        schemaProvider.addSchemaWithUri('tree', externalSchemaUri, externalSchema);
+        schemaProvider.addSchema(SCHEMA_ID, mainSchema);
+        const content = `tree:
+  name: "root"
+  children:
+    - name: "child"`;
+        const result = await parseSetup(content);
+        assert.equal(
+          result.length,
+          0,
+          `Expected no errors, got ${result.length}. Errors: ${JSON.stringify(result.map((r) => r.message))}`
+        );
+      });
+    });
+
+    describe('$id Base URI Handling', () => {
+      it('draft-2019-09 schema with $id and $anchor', async () => {
+        const schema: JSONSchema = {
+          $schema: 'https://json-schema.org/draft/2019-09/schema',
+          $id: 'https://example.com/schema',
+          $defs: {
+            MyType: {
+              $anchor: 'myAnchor',
+              type: 'string',
+            },
+          },
+          properties: {
+            // Use same-document reference - anchor should be scoped to $id
+            foo: { $ref: '#myAnchor' },
+          },
+        };
+        schemaProvider.addSchema(SCHEMA_ID, schema);
+        const content = `foo: "bar"`;
+        const result = await parseSetup(content);
+        assert.equal(
+          result.length,
+          0,
+          `Expected no errors, got ${result.length}. Errors: ${JSON.stringify(result.map((r) => r.message))}`
+        );
+      });
+
+      it('draft-2019-09 schema with relative $id and $anchor', async () => {
+        const schema: JSONSchema = {
+          $schema: 'https://json-schema.org/draft/2019-09/schema',
+          $id: 'subschema.json',
+          $defs: {
+            MyType: {
+              $anchor: 'myAnchor',
+              type: 'string',
+            },
+          },
+          properties: {
+            foo: { $ref: '#myAnchor' },
+          },
+        };
+        schemaProvider.addSchema(SCHEMA_ID, schema);
+        const content = `foo: "bar"`;
+        const result = await parseSetup(content);
+        assert.equal(
+          result.length,
+          0,
+          `Expected no errors, got ${result.length}. Errors: ${JSON.stringify(result.map((r) => r.message))}`
+        );
+      });
+
+      it('draft-2020-12 schema with $id and relative $ref', async () => {
+        // Register child schema separately to test relative $ref resolution
+        const childSchema: JSONSchema = {
+          $schema: 'https://json-schema.org/draft/2020-12/schema',
+          $id: 'https://example.com/child.json',
+          type: 'object',
+          properties: {
+            name: { type: 'string' },
+          },
+        };
+        schemaProvider.addSchemaWithUri('child', 'https://example.com/child.json', childSchema);
+
+        const schema: JSONSchema = {
+          $schema: 'https://json-schema.org/draft/2020-12/schema',
+          $id: 'https://example.com/main',
+          properties: {
+            // Relative $ref should resolve relative to $id base URI
+            child: { $ref: 'child.json' },
+          },
+        };
+        schemaProvider.addSchema(SCHEMA_ID, schema);
+        const content = `child:
+  name: "test"`;
+        const result = await parseSetup(content);
+        assert.equal(
+          result.length,
+          0,
+          `Expected no errors, got ${result.length}. Errors: ${JSON.stringify(result.map((r) => r.message))}`
+        );
+      });
+
+      it('draft-2019-09 schema with nested $id scoping', async () => {
+        const schema: JSONSchema = {
+          $schema: 'https://json-schema.org/draft/2019-09/schema',
+          $id: 'https://example.com/root',
+          $defs: {
+            Nested: {
+              $id: 'nested.json',
+              $defs: {
+                Deep: {
+                  $anchor: 'deep',
+                  type: 'number',
+                },
+              },
+              properties: {
+                value: { $ref: '#deep' },
+              },
+            },
+          },
+          properties: {
+            nested: { $ref: '#/$defs/Nested' },
+          },
+        };
+        schemaProvider.addSchema(SCHEMA_ID, schema);
+        const content = `nested:
+  value: 42`;
+        const result = await parseSetup(content);
+        assert.equal(
+          result.length,
+          0,
+          `Expected no errors, got ${result.length}. Errors: ${JSON.stringify(result.map((r) => r.message))}`
+        );
+      });
+
+      it('draft-2020-12 schema with $id and $dynamicAnchor', async () => {
+        const schema: JSONSchema = {
+          $schema: 'https://json-schema.org/draft/2020-12/schema',
+          $id: 'https://example.com/schema',
+          $defs: {
+            Recursive: {
+              $dynamicAnchor: 'recursive',
+              type: 'object',
+              properties: {
+                self: { $dynamicRef: '#recursive' },
+              },
+            },
+          },
+          properties: {
+            item: { $ref: '#/$defs/Recursive' },
+          },
+        };
+        schemaProvider.addSchema(SCHEMA_ID, schema);
+        const content = `item:
+  self:
+    self: {}`;
+        const result = await parseSetup(content);
+        assert.equal(
+          result.length,
+          0,
+          `Expected no errors, got ${result.length}. Errors: ${JSON.stringify(result.map((r) => r.message))}`
+        );
+      });
+    });
+
+    describe('Enhanced Fragment Resolution', () => {
+      it('draft-2019-09 mixed anchor and JSON pointer references', async () => {
+        const schema: JSONSchema = {
+          $schema: 'https://json-schema.org/draft/2019-09/schema',
+          type: 'object',
+          $defs: {
+            AnchorType: {
+              $anchor: 'anchorType',
+              type: 'string',
+            },
+            PointerType: {
+              type: 'number',
+            },
+          },
+          properties: {
+            // Mix anchor reference and JSON pointer in same schema
+            anchorRef: { $ref: '#anchorType' },
+            pointerRef: { $ref: '#/$defs/PointerType' },
+          },
+        };
+        schemaProvider.addSchema(SCHEMA_ID, schema);
+        const content = `anchorRef: "test"
+pointerRef: 42`;
+        const result = await parseSetup(content);
+        assert.equal(
+          result.length,
+          0,
+          `Expected no errors, got ${result.length}. Errors: ${JSON.stringify(result.map((r) => r.message))}`
+        );
+      });
+
+      it('draft-2020-12 invalid anchor reference error', async () => {
+        const schema: JSONSchema = {
+          $schema: 'https://json-schema.org/draft/2020-12/schema',
+          type: 'object',
+          properties: {
+            invalidAnchor: { $ref: '#nonexistentAnchor' },
+            invalidPointer: { $ref: '#/$defs/Nonexistent' },
+          },
+        };
+        schemaProvider.addSchema(SCHEMA_ID, schema);
+        const content = `invalidAnchor: "test"
+invalidPointer: "test"`;
+        const result = await parseSetup(content);
+        // Should have at least one resolution error
+        assert(
+          result.length >= 1,
+          `Expected at least 1 error, got ${result.length}. Errors: ${JSON.stringify(result.map((r) => r.message))}`
+        );
+        // Should report resolution errors
+        assert(
+          result.some((r) => r.message.includes('can not be resolved')),
+          'Should have resolution error'
+        );
+      });
+
+      it('draft-2019-09 schema with anchor, recursive anchor, and JSON pointer', async () => {
+        const schema: JSONSchema = {
+          $schema: 'https://json-schema.org/draft/2019-09/schema',
+          type: 'object',
+          $defs: {
+            AnchorType: {
+              $anchor: 'anchor',
+              type: 'string',
+            },
+            RecursiveType: {
+              $recursiveAnchor: 'recursive',
+              type: 'object',
+              properties: {
+                self: { $recursiveRef: '#recursive' },
+              },
+            },
+            PointerType: {
+              type: 'number',
+            },
+          },
+          properties: {
+            anchor: { $ref: '#anchor' },
+            recursive: { $ref: '#/$defs/RecursiveType' },
+            pointer: { $ref: '#/$defs/PointerType' },
+          },
+        };
+        schemaProvider.addSchema(SCHEMA_ID, schema);
+        const content = `anchor: "test"
+recursive:
+  self: {}
+pointer: 42`;
+        const result = await parseSetup(content);
+        assert.equal(
+          result.length,
+          0,
+          `Expected no errors, got ${result.length}. Errors: ${JSON.stringify(result.map((r) => r.message))}`
+        );
+      });
+
+      it('draft-2020-12 schema with all reference types', async () => {
+        const schema: JSONSchema = {
+          $schema: 'https://json-schema.org/draft/2020-12/schema',
+          type: 'object',
+          $defs: {
+            AnchorType: {
+              $anchor: 'anchor',
+              type: 'string',
+            },
+            DynamicType: {
+              $dynamicAnchor: 'dynamic',
+              type: 'object',
+              properties: {
+                self: { $dynamicRef: '#dynamic' },
+              },
+            },
+            PointerType: {
+              type: 'number',
+            },
+          },
+          properties: {
+            anchor: { $ref: '#anchor' },
+            dynamic: { $ref: '#/$defs/DynamicType' },
+            pointer: { $ref: '#/$defs/PointerType' },
+          },
+        };
+        schemaProvider.addSchema(SCHEMA_ID, schema);
+        const content = `anchor: "test"
+dynamic:
+  self: {}
+pointer: 42`;
+        const result = await parseSetup(content);
+        assert.equal(
+          result.length,
+          0,
+          `Expected no errors, got ${result.length}. Errors: ${JSON.stringify(result.map((r) => r.message))}`
+        );
+      });
+    });
+
+    describe('Validation Integration', () => {
+      it('draft-2019-09 validation error with $anchor reference', async () => {
+        const schema: JSONSchema = {
+          $schema: 'https://json-schema.org/draft/2019-09/schema',
+          type: 'object',
+          $defs: {
+            StringType: {
+              $anchor: 'stringType',
+              type: 'string',
+              minLength: 5,
+            },
+          },
+          properties: {
+            value: { $ref: '#stringType' },
+          },
+        };
+        schemaProvider.addSchema(SCHEMA_ID, schema);
+        const content = `value: "abc"`; // Too short
+        const result = await parseSetup(content);
+        assert.equal(
+          result.length,
+          1,
+          `Expected 1 error, got ${result.length}. Errors: ${JSON.stringify(result.map((r) => r.message))}`
+        );
+        assert.equal(result[0].severity, DiagnosticSeverity.Error, `Error severity should be Error. Got: ${result[0].severity}`);
+        assert.equal(
+          result[0].message,
+          'String is shorter than the minimum length of 5.',
+          `Expected exact error message. Got: ${result[0].message}`
+        );
+      });
+
+      it('draft-2020-12 validation error with $dynamicAnchor reference', async () => {
+        const schema: JSONSchema = {
+          $schema: 'https://json-schema.org/draft/2020-12/schema',
+          type: 'object',
+          $defs: {
+            NumberType: {
+              $dynamicAnchor: 'numberType',
+              type: 'number',
+              minimum: 10,
+            },
+          },
+          properties: {
+            value: { $ref: '#/$defs/NumberType' },
+          },
+        };
+        schemaProvider.addSchema(SCHEMA_ID, schema);
+        const content = `value: 5`; // Too small
+        const result = await parseSetup(content);
+        assert.equal(
+          result.length,
+          1,
+          `Expected 1 error, got ${result.length}. Errors: ${JSON.stringify(result.map((r) => r.message))}`
+        );
+        assert.equal(result[0].severity, DiagnosticSeverity.Error, `Error severity should be Error. Got: ${result[0].severity}`);
+        assert.equal(
+          result[0].message,
+          'Value is below the minimum of 10.',
+          `Expected exact error message. Got: ${result[0].message}`
+        );
+      });
+
+      it('draft-2019-09 validation with $recursiveRef in nested structure', async () => {
+        const schema: JSONSchema = {
+          $schema: 'https://json-schema.org/draft/2019-09/schema',
+          type: 'object',
+          $recursiveAnchor: true,
+          properties: {
+            value: { type: 'string' },
+            children: {
+              type: 'array',
+              items: { $recursiveRef: '#' },
+            },
+          },
+          required: ['value'],
+        };
+        schemaProvider.addSchema(SCHEMA_ID, schema);
+        const content = `value: "test"
+children:
+  - value: "child"`;
+        const result = await parseSetup(content);
+        assert.equal(
+          result.length,
+          0,
+          `Expected no errors, got ${result.length}. Errors: ${JSON.stringify(result.map((r) => r.message))}`
+        );
+      });
+
+      it('draft-2019-09 validation error with missing required property via anchor', async () => {
+        const schema: JSONSchema = {
+          $schema: 'https://json-schema.org/draft/2019-09/schema',
+          type: 'object',
+          $defs: {
+            Person: {
+              $anchor: 'person',
+              type: 'object',
+              properties: {
+                name: { type: 'string' },
+                age: { type: 'number' },
+              },
+              required: ['name', 'age'],
+            },
+          },
+          properties: {
+            person: { $ref: '#person' },
+          },
+        };
+        schemaProvider.addSchema(SCHEMA_ID, schema);
+        const content = `person:
+  name: "John"`; // Missing age
+        const result = await parseSetup(content);
+        assert.equal(
+          result.length,
+          1,
+          `Expected 1 error, got ${result.length}. Errors: ${JSON.stringify(result.map((r) => r.message))}`
+        );
+        assert.equal(result[0].severity, DiagnosticSeverity.Error, `Error severity should be Error. Got: ${result[0].severity}`);
+        assert.equal(result[0].message, 'Missing property "age".', `Expected exact error message. Got: ${result[0].message}`);
+      });
+
+      it('draft-2020-12 validation with unevaluatedProperties and anchor reference', async () => {
+        const schema: JSONSchema = {
+          $schema: 'https://json-schema.org/draft/2020-12/schema',
+          type: 'object',
+          properties: {
+            baseProp: { type: 'string' },
+          },
+          unevaluatedProperties: false,
+        };
+        schemaProvider.addSchema(SCHEMA_ID, schema);
+        const content = `baseProp: "test"
+extraProp: "not allowed"`;
+        const result = await parseSetup(content);
+        assert.equal(
+          result.length,
+          1,
+          `Expected 1 error, got ${result.length}. Errors: ${JSON.stringify(result.map((r) => r.message))}`
+        );
+        assert.equal(result[0].severity, DiagnosticSeverity.Error, `Error severity should be Error. Got: ${result[0].severity}`);
+        assert.equal(
+          result[0].message,
+          'Property extraProp is not allowed.',
+          `Expected exact error message. Got: ${result[0].message}`
+        );
+      });
+    });
+
+    describe('Issue #823: $ref to $id anchor (draft-07)', () => {
+      it('draft-07 schema with $id anchor and $ref', async () => {
+        // Test case from https://github.com/redhat-developer/yaml-language-server/issues/823
+        const schema: JSONSchema = {
+          $schema: 'http://json-schema.org/draft-07/schema',
+          type: 'object',
+          properties: {
+            A: { $id: '#A', type: 'string' },
+            B: { $ref: '#A' },
+          },
+        };
+        schemaProvider.addSchema(SCHEMA_ID, schema);
+        const content = `A: foo
+B: bar`;
+        const result = await parseSetup(content);
+        assert.equal(
+          result.length,
+          0,
+          `Expected no errors, got ${result.length}. Errors: ${JSON.stringify(result.map((r) => r.message))}`
+        );
+      });
+
+      it('draft-07 schema with $id anchor validation error', async () => {
+        const schema: JSONSchema = {
+          $schema: 'http://json-schema.org/draft-07/schema',
+          type: 'object',
+          properties: {
+            StringType: { $id: '#StringType', type: 'string', minLength: 5 },
+            value: { $ref: '#StringType' },
+          },
+        };
+        schemaProvider.addSchema(SCHEMA_ID, schema);
+        const content = `value: "abc"`; // Too short
+        const result = await parseSetup(content);
+        assert.equal(
+          result.length,
+          1,
+          `Expected 1 error, got ${result.length}. Errors: ${JSON.stringify(result.map((r) => r.message))}`
+        );
+        assert.equal(result[0].severity, DiagnosticSeverity.Error, `Error severity should be Error. Got: ${result[0].severity}`);
+        assert.equal(
+          result[0].message,
+          'String is shorter than the minimum length of 5.',
+          `Expected exact error message. Got: ${result[0].message}`
+        );
+      });
+
+      it('draft-07 schema with $id anchor in nested properties', async () => {
+        const schema: JSONSchema = {
+          $schema: 'http://json-schema.org/draft-07/schema',
+          type: 'object',
+          properties: {
+            person: {
+              type: 'object',
+              properties: {
+                name: { $id: '#name', type: 'string' },
+                age: { $id: '#age', type: 'number' },
+              },
+              required: ['name', 'age'],
+            },
+            nameRef: { $ref: '#name' },
+            ageRef: { $ref: '#age' },
+          },
+        };
+        schemaProvider.addSchema(SCHEMA_ID, schema);
+        const content = `person:
+  name: "John"
+  age: 30
+nameRef: "Jane"
+ageRef: 25`;
+        const result = await parseSetup(content);
+        assert.equal(
+          result.length,
+          0,
+          `Expected no errors, got ${result.length}. Errors: ${JSON.stringify(result.map((r) => r.message))}`
+        );
+      });
+
+      it('draft-2019-09 schema with $id fragment identifier (backward compatibility)', async () => {
+        // In draft-2019-09, $id with fragment identifier should still work for backward compatibility
+        // though $anchor is preferred
+        const schema: JSONSchema = {
+          $schema: 'https://json-schema.org/draft/2019-09/schema',
+          type: 'object',
+          properties: {
+            A: { $id: '#A', type: 'string' },
+            B: { $ref: '#A' },
+          },
+        };
+        schemaProvider.addSchema(SCHEMA_ID, schema);
+        const content = `A: foo
+B: bar`;
+        const result = await parseSetup(content);
+        assert.equal(
+          result.length,
+          0,
+          `Expected no errors, got ${result.length}. Errors: ${JSON.stringify(result.map((r) => r.message))}`
+        );
+      });
+
+      it('draft-2020-12 schema with $id fragment identifier (backward compatibility)', async () => {
+        // In draft-2020-12, $id with fragment identifier should still work for backward compatibility
+        // though $anchor is preferred
+        const schema: JSONSchema = {
+          $schema: 'https://json-schema.org/draft/2020-12/schema',
+          type: 'object',
+          properties: {
+            A: { $id: '#A', type: 'string' },
+            B: { $ref: '#A' },
+          },
+        };
+        schemaProvider.addSchema(SCHEMA_ID, schema);
+        const content = `A: foo
+B: bar`;
+        const result = await parseSetup(content);
+        assert.equal(
+          result.length,
+          0,
+          `Expected no errors, got ${result.length}. Errors: ${JSON.stringify(result.map((r) => r.message))}`
+        );
+      });
+    });
   });
 });
