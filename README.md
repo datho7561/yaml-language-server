@@ -2,82 +2,236 @@
 
 # YAML Language Server
 
-Supports JSON Schema drafts 04, 07, 2019-09, and 2020-12.
-Starting from `1.0.0` the language server uses [eemeli/yaml](https://github.com/eemeli/yaml) as the new YAML parser, which strictly enforces the specified YAML spec version. Default YAML spec version is `1.2`, it can be changed with `yaml.yamlVersion` setting.
+Provides YAML language features over the [Language Server Protocol](https://github.com/Microsoft/language-server-protocol) (LSP), including validation, completion, hover, formatting, document symbols, and schema-based intelligence.
+
+Starting from version `1.0.0`, the language server uses [eemeli/yaml](https://github.com/eemeli/yaml) as its YAML parser, which strictly enforces the specified YAML spec version. The default YAML spec version is `1.2`. Set `yaml.yamlVersion` to `1.1` for compatibility with older YAML files.
+
+Schema validation supports JSON Schema `draft-04`, `draft-07`, `2019-09`, and `2020-12`.
 
 ## Features
 
-1. YAML validation:
-   - Detects whether the entire file is valid yaml
-2. Validation:
-   - Detects errors such as:
+1. **YAML validation**:
+   - Detects whether the entire file is valid YAML
+   - Reports diagnostics such as:
      - Node is not found
      - Node has an invalid key node type
      - Node has an invalid type
      - Node is not a valid child node
-   - Detects warnings such as:
-     - Node is an additional property of parent
-3. Auto completion:
-   - Auto completes on all commands
-   - Scalar nodes autocomplete to schema's defaults if they exist
-4. Hover support:
-   - Hovering over a node shows description _if available_
-5. Document outlining:
-   - Shows a complete document outline of all nodes in the document
+     - Node is an additional property of its parent
+2. **Document symbols**:
+   - Provides document symbols and hierarchical document symbols for YAML nodes
+3. **Completion**:
+   - Completes YAML keys, values, and structure based on the associated schema
+   - Completes scalar nodes with schema defaults when defaults are available
+4. **Hover**:
+   - Shows schema descriptions for YAML nodes when descriptions are available
+   - Shows anchor information when `yaml.hoverAnchor` is enabled
+   - Shows schema source information when `yaml.hoverSchemaSource` is enabled
+5. **Formatting**:
+   - Formats YAML documents
+   - Supports on-type formatting on newline, including automatic indentation for mappings and array items
 
-## Language Server Settings
+Completion and hover content are schema-driven. See [Associating schemas](#associating-schemas) for configuration details.
 
-The following settings are supported:
+## Language server settings
 
-- `yaml.yamlVersion`: Set default YAML spec version (1.2 or 1.1)
-- `yaml.format.enable`: Enable/disable default YAML formatter (requires restart)
-- `yaml.format.singleQuote`: Use single quotes instead of double quotes
-- `yaml.format.bracketSpacing`: Print spaces between brackets in objects
-- `yaml.format.proseWrap`: Always: wrap prose if it exceeds the print width, Never: never wrap the prose, Preserve: wrap prose as-is
-- `yaml.format.printWidth`: Specify the line length that the printer will wrap on
-- `yaml.validate`: Enable/disable validation feature
-- `yaml.hover`: Enable/disable hover
-- `yaml.completion`: Enable/disable autocompletion
-- `yaml.schemas`: Helps you associate schemas with files in a glob pattern
-- `yaml.kubernetesVersion`: Kubernetes version used to build the schema URL when `yaml.schemas` maps files to the `Kubernetes` keyword.
-- `yaml.disableSchemaDetection`: Disables schema detection for matching YAML files. Modelines still apply.
-- `yaml.schemaStore.enable`: When set to true the YAML language server will pull in all available schemas from [JSON Schema Store](https://www.schemastore.org)
-- `yaml.schemaStore.url`: URL of a schema store catalog to use when downloading schemas.
-- `yaml.kubernetesCRDStore.enable`: When set to true the YAML language server will parse Kubernetes CRDs automatically and download them from the [CRD store](https://github.com/datreeio/CRDs-catalog).
-- `yaml.kubernetesCRDStore.url`: URL of a crd store catalog to use when downloading schemas. Defaults to `https://raw.githubusercontent.com/datreeio/CRDs-catalog/main`.
-- `yaml.customTags`: Array of custom tags that the parser will validate against. It has three ways to be used. A tag without a type, such as "!Ref", is treated as a scalar tag. A tag with a node type, such as "!Ref sequence", specifies the YAML node type that the tag is written on. A tag with a node type and return type, such as "!FindInMap sequence:string", also specifies the schema type that the tagged value evaluates to. Supported node types are scalar, sequence, and mapping. Supported return types are string, number, integer, boolean, null, array, and object. The return type aliases scalar, sequence, and mapping are accepted as string, array, and object.
-- `yaml.maxItemsComputed`: The maximum number of outline symbols and folding regions computed (limited for performance reasons).
-- `[yaml].editor.tabSize`: the number of spaces to use when autocompleting. Takes priority over editor.tabSize.
-- `editor.tabSize`: the number of spaces to use when autocompleting. Default is 2.
-- `http.proxy`: The URL of the proxy server that will be used when attempting to download a schema. If it is not set or it is undefined no proxy server will be used.
-- `http.proxyStrictSSL`: If true the proxy server certificate should be verified against the list of supplied CAs. Default is false.
-- `[yaml].editor.formatOnType`: Enable/disable on type indent and auto formatting array
-- `yaml.disableDefaultProperties`: Disable adding not required properties with default values into completion text
-- `yaml.suggest.parentSkeletonSelectedFirst`: If true, the user must select some parent skeleton first before autocompletion starts to suggest the rest of the properties. When yaml object is not empty, autocompletion ignores this setting and returns all properties and skeletons.
-- `yaml.style.flowMapping` : Forbids flow style mappings if set to `forbid` 
-- `yaml.style.flowSequence` : Forbids flow style sequences if set to `forbid`
-- `yaml.keyOrdering` : Enforces alphabetical ordering of keys in mappings when set to `true`. Default is `false`
-- `yaml.hoverSchemaSource`: Enable/disable showing the schema source in hover tooltips. Default is `true`
+Settings are supplied through LSP configuration. Setting names match the `yaml.*` configuration used by common integrations.
 
-## Suppressing diagnostics
+- `yaml.yamlVersion`: Set default YAML spec version (`1.2` or `1.1`). Defaults to `1.2`.
+- `yaml.maxItemsComputed`: The maximum number of outline symbols and folding regions computed (limited for performance reasons). Defaults to `5000`.
+- `yaml.format.enable`: Enable/disable default YAML formatter. Defaults to `true`.
+- `yaml.format.singleQuote`: Use single quotes instead of double quotes. Defaults to `false`.
+- `yaml.format.bracketSpacing`: Print spaces between brackets in objects. Defaults to `true`.
+- `yaml.format.proseWrap`: Control prose wrapping behavior. `always`: wrap prose if it exceeds the print width, `never`: never wrap the prose, `preserve`: wrap prose as-is. Defaults to `preserve`.
+- `yaml.format.printWidth`: Specify the line length that the printer will wrap on. Defaults to `80`.
+- `yaml.format.trailingComma`: Specify if trailing commas should be used in JSON-like segments of the YAML. Defaults to `true`.
+- `yaml.validate`: Enable/disable validation feature. Defaults to `true`.
+- `yaml.hover`: Enable/disable hover. Defaults to `true`.
+- `yaml.hoverAnchor`: Enable/disable hover feature for anchors. Defaults to `true`.
+- `yaml.hoverSchemaSource`: Enable/disable showing the schema source in hover tooltips. Defaults to `true`.
+- `yaml.completion`: Enable/disable autocompletion. Defaults to `true`.
+- `yaml.disableDefaultProperties`: Disable adding not required properties with default values into completion text. Defaults to `false`.
+- `yaml.suggest.parentSkeletonSelectedFirst`: If true, the user must select some parent skeleton first before autocompletion starts to suggest the rest of the properties. When the YAML object is not empty, autocompletion ignores this setting and returns all properties and skeletons. Defaults to `false`.
+- `yaml.schemas`: Associate schemas with files using glob patterns. See [Associating schemas](#associating-schemas) for details.
+- `yaml.disableSchemaDetection`: Disable schema detection for YAML files matching the configured glob pattern or list of glob patterns. Modelines still apply.
+- `yaml.schemaStore.enable`: When set to true, the YAML language server will pull in all available schemas from [JSON Schema Store](http://schemastore.org/). Defaults to `true`.
+- `yaml.schemaStore.url`: URL of a schema store catalog to use when downloading schemas. Defaults to `https://www.schemastore.org/api/json/catalog.json`.
+- `yaml.customTags`: Array of custom tags that the parser will validate against. It has three ways to be used. A tag without a type, such as "!Ref", is treated as a scalar tag. A tag with a node type, such as "!Ref sequence", specifies the YAML node type that the tag is written on. A tag with a node type and return type, such as "!FindInMap sequence:string", also specifies the schema type that the tagged value evaluates to. Supported node types are scalar, sequence, and mapping. Supported return types are string, number, integer, boolean, null, array, and object. The return type aliases scalar, sequence, and mapping are accepted as string, array, and object. See [Adding custom tags](#adding-custom-tags) for usage details.
+- `yaml.disableAdditionalProperties`: Globally set `additionalProperties` to `false` for all objects. When enabled, no extra properties are allowed in YAML objects beyond those defined in the schema. Defaults to `false`.
+- `yaml.kubernetesCRDStore.enable`: Enable/disable validation of Kubernetes custom resources using schemas from well-known Custom Resource Definitions (CRDs). Defaults to `true`.
+- `yaml.kubernetesCRDStore.url`: The base URL for fetching well-known Custom Resource Definition (CRD) schemas. Defaults to `https://raw.githubusercontent.com/datreeio/CRDs-catalog/main`.
+- `yaml.kubernetesVersion`: Kubernetes version used to build the schema URL when `yaml.schemas` maps files to the `kubernetes` keyword. If omitted, the extension falls back to a predefined default Kubernetes version.
+- `yaml.style.flowMapping`: Control flow style mappings. Forbids flow style mappings if set to `forbid`. Defaults to `allow`.
+- `yaml.style.flowSequence`: Control flow style sequences. Forbids flow style sequences if set to `forbid`. Defaults to `allow`.
+- `yaml.keyOrdering`: Enforces alphabetical ordering of keys in mappings when set to `true`. Defaults to `false`.
+- `http.proxy`: The URL of the proxy server that will be used when attempting to download a schema. If it is not set or it is undefined, no proxy server will be used.
+- `http.proxyStrictSSL`: If true, the proxy server certificate should be verified against the list of supplied CAs. Defaults to `false`.
+- `[yaml].editor.tabSize`: Number of spaces to use for YAML indentation. When provided, this setting is used for generated completion text. Defaults to `2`.
+- `editor.tabSize`: Fallback indentation size when no YAML-specific tab size is provided. Defaults to `2`.
+- `[yaml].editor.formatOnType`: Client/editor setting that controls whether on-type formatting requests are sent for YAML files. When enabled by the client, `yaml-language-server` can format YAML as the user types, such as adjusting indentation after a newline.
 
-You can suppress specific validation warnings on a per-line basis by adding a `# yaml-language-server-disable` comment on the line immediately before the one producing the diagnostic. To disable schema validation for an entire file, use a [modeline schema association](#using-modeline).
+## Associating schemas
+
+The language server uses [JSON Schema](https://json-schema.org/) to understand the shape of YAML files. Schema definitions can be written in JSON (`.json`) or YAML (`.yaml` or `.yml`) format.
+
+Schemas can be associated with YAML files by using a modeline, an inline `$schema` property, or the `yaml.schemas` setting. Integrations can also provide schema associations through LSP notifications. See [Schema association notification](#schema-association-notification) for integration details.
+
+When multiple schema sources or schema-disabling settings apply to the same file, see [Schema resolution priority](#schema-resolution-priority).
+
+### Using a modeline
+
+Specify a schema for a YAML file by adding a modeline comment at the top of the file:
+
+```yaml
+# yaml-language-server: $schema=<schema-url-or-path>
+```
+
+The IntelliJ-compatible `$schema` comment format is also supported:
+
+```yaml
+# $schema: <schema-url-or-path>
+```
+
+Relative paths in modelines are resolved from the YAML file's location, not the workspace root.
+
+### Using an inline `$schema` property
+
+Specify a schema for a YAML file by adding a top-level `$schema` property:
+
+```yaml
+$schema: <schema-url-or-path>
+```
+
+Relative paths in inline `$schema` properties are resolved from the YAML file's location, not the workspace root.
+
+### Using `yaml.schemas`
+
+Configure schema-to-file mappings in your LSP client settings using the `yaml.schemas` option.
+
+Each entry maps a schema to one or more file patterns:
+
+* **Key**: Schema URI, local file path, or the `kubernetes` keyword
+* **Value**: A glob pattern or array of glob patterns
+
+#### Remote schemas
+
+Use a schema URL as the key:
+
+```json
+{
+  "yaml.schemas": {
+    "https://getcomposer.org/schema.json": "composer.yaml",
+    "https://example.com/api-schema.json": ["api/*.yml", "api/*.yaml"]
+  }
+}
+```
+
+#### Local schemas
+
+Use an absolute path, file URI, or relative path as the key.
+
+In a single-folder workspace, relative schema paths are resolved from the workspace root.
+
+On macOS or Linux:
+
+```json
+{
+  "yaml.schemas": {
+    "/home/user/custom_schema.json": "someFilePattern.yaml",
+    "/home/user/custom_schema.yaml": "anotherPattern.yaml",
+    "../relative/path/schema.json": ["filePattern1.yaml", "filePattern2.yaml"]
+  }
+}
+```
+
+On Windows:
+
+```json
+{
+  "yaml.schemas": {
+    "C:\\Users\\user\\Documents\\custom_schema.json": "someFilePattern.yaml",
+    "file:///C:/Users/user/Documents/custom_schema.yaml": "anotherPattern.yaml",
+    "../relative/path/schema.json": ["filePattern1.yaml", "filePattern2.yaml"]
+  }
+}
+```
+
+**Multi-root workspaces**
+
+In multi-root workspaces, prefix schema paths with the workspace folder name that contains the schema.
+
+Suppose the workspace contains two folders, `project-a` and `project-b`:
+
+```shell
+project-a/
+├── test.yaml
+└── schema.json
+project-b/
+├── test.yaml
+└── schema.json
+```
+
+Use the workspace folder name at the start of each schema path key:
+
+```json
+{
+  "yaml.schemas": {
+    "project-a/schema.json": "project-a/test.yaml",
+    "project-b/schema.json": "project-b/test.yaml"
+  }
+}
+```
+
+#### Kubernetes schemas
+
+Use the reserved `kubernetes` keyword to validate Kubernetes YAML files. The language server resolves the keyword to a versioned Kubernetes schema URL based on `yaml.kubernetesVersion`.
+
+```json
+{
+  "yaml.schemas": {
+    "kubernetes": "k8s/*.yaml"
+  }
+}
+```
+
+Specify `yaml.kubernetesVersion` to choose the Kubernetes schema version:
+
+```json
+{
+  "yaml.kubernetesVersion": "1.36.1",
+  "yaml.schemas": {
+    "kubernetes": "k8s/*.yaml"
+  }
+}
+```
+
+If `yaml.kubernetesVersion` is not set, the language server uses the default Kubernetes version.
+
+## Suppressing Diagnostics
+
+To hide diagnostics for a specific YAML line, add a suppression comment immediately before that line. To disable schema validation for an entire file, see [Disabling Schema Validation](#disabling-schema-validation).
 
 ### Suppress all diagnostics on a line
+
+Add `# yaml-language-server-disable` immediately before the line that produces the diagnostic:
 
 ```yaml
 # yaml-language-server-disable
 version: 123
 ```
 
-### Suppress only specific diagnostics
+### Suppress matching diagnostics
 
-Provide one or more message substrings (comma-separated, case-insensitive). Only diagnostics whose message contains a matching substring will be suppressed; the rest are kept.
+Add one or more comma-separated diagnostic message substrings after `# yaml-language-server-disable`. Only diagnostics whose messages contain a matching substring are suppressed; the rest are still reported. Matching is case-insensitive.
+
+Single substring:
 
 ```yaml
 # yaml-language-server-disable Incorrect type
 version: 123
 ```
+
+Multiple substrings:
 
 ```yaml
 # yaml-language-server-disable Incorrect type, not accepted
@@ -86,23 +240,80 @@ version: 123
 
 The substrings are matched against the diagnostic message text reported by the language server.
 
-##### Adding custom tags
+## Disabling schema validation
 
-In order to use the custom tags in your YAML file you need to first specify the custom tags in the setting of your code editor. For example, we can have the following custom tags:
+Disabling schema validation stops schema-based diagnostics. The file is still parsed as YAML, so YAML syntax errors can still be reported.
+
+### Using a modeline
+
+Disable schema validation for the current file by setting `$schema` to `none` in a modeline:
 
 ```yaml
-"yaml.customTags": [
-    "!Scalar-example scalar",
-    "!Seq-example sequence",
-    "!Mapping-example mapping",
-    "!Seq-as-string-example sequence:string"
+# yaml-language-server: $schema=none
+```
+
+The IntelliJ-compatible `$schema` comment format is also supported:
+
+```yaml
+# $schema: none
+```
+
+### Using `yaml.disableSchemaDetection`
+
+Prevent detected schemas from being applied to specific YAML files by configuring `yaml.disableSchemaDetection` with one or more glob patterns.
+
+For matching files, schemas from `yaml.schemas`, schema association notifications, and Schema Store are ignored.
+
+For one file pattern:
+
+```yaml
+yaml.disableSchemaDetection: "**/.github/workflows/*.yaml"
+```
+
+For multiple file patterns:
+
+```yaml
+yaml.disableSchemaDetection: ["some.yaml", "**/.github/workflows/*.yaml"]
+```
+
+### Schema resolution priority
+
+When multiple schema sources apply to the same YAML file, the language server uses the following priority order, from highest to lowest:
+
+1. Modeline
+2. Inline `$schema` property
+3. Custom schema provider API
+4. `yaml.disableSchemaDetection`
+5. `yaml.schemas`
+6. Schema association notification
+7. Schema Store
+
+## Adding custom tags
+
+YAML custom tags extend the language with application-specific syntax. Configure custom tags with the `yaml.customTags` setting.
+
+Each entry supports one of these formats:
+
+- `!Tag`: Treats the tag as a scalar tag
+- `!Tag nodeType`: Specifies the YAML node type for the tagged value
+- `!Tag nodeType:returnType`: Specifies the YAML node type and the schema type used during validation
+
+Supported node types are `scalar`, `sequence`, and `mapping`.
+
+Supported return types are `string`, `number`, `integer`, `boolean`, `null`, `array`, and `object`. The aliases `scalar`, `sequence`, and `mapping` are also accepted as `string`, `array`, and `object`.
+
+For example:
+
+```yaml
+yaml.customTags: [
+  "!Scalar-example",
+  "!Seq-example sequence",
+  "!Mapping-example mapping",
+  "!Seq-as-string-example sequence:string"
 ]
 ```
 
-The !Scalar-example would map to a scalar custom tag, the !Seq-example would map to a sequence custom tag, and the !Mapping-example would map to a mapping custom tag.
-The !Seq-as-string-example would map to a sequence custom tag, and the whole tagged value would be treated as a string during schema validation.
-
-We can then use the newly defined custom tags inside our YAML file:
+These tags can then be used in YAML files:
 
 ```yaml
 some_key: !Scalar-example some_value
@@ -117,335 +328,18 @@ some_string: !Seq-as-string-example
   - value_2
 ```
 
-##### Associating a schema to a glob pattern via yaml.schemas:
+In the last example, `!Seq-as-string-example` is written on a YAML sequence, but schema validation treats the tagged value as a string because its return type is `string`.
 
-`yaml.schemas` applies a schema to a file. In other words, the schema (placed on the left) is applied to the glob pattern on the right. Your schema can be local or online. Local schema paths can be relative to the project root or absolute paths.
+## Using the language server
 
-For example:
-If you have project structure
+The language server can be used through an existing LSP client or launched directly for integration with an editor, IDE, CLI, or another development tool.
 
-myProject
-
-&nbsp;&nbsp;&nbsp;> myYamlFile.yaml
-
-you can do
-
-```yaml
-yaml.schemas: {
-    "https://json.schemastore.org/composer": "/myYamlFile.yaml"
-}
-```
-
-and that will associate the composer schema with myYamlFile.yaml.
-
-## More examples of schema association:
-
-### Using yaml.schemas settings
-
-#### Single root schema association:
-
-When associating a schema it should follow the format below
-
-```yaml
-yaml.schemas: {
-    "url": "globPattern",
-    "Kubernetes": "globPattern"
-}
-```
-
-e.g.
-
-```yaml
-yaml.schemas: {
-    "https://json.schemastore.org/composer": "/*"
-}
-```
-
-e.g.
-
-```yaml
-yaml.schemas: {
-    "kubernetes": "/myYamlFile.yaml"
-}
-```
-
-e.g.
-
-```yaml
-yaml.schemas: {
-    "https://json.schemastore.org/composer": "/*",
-    "kubernetes": "/myYamlFile.yaml"
-}
-```
-
-On Windows with full path:
-
-```yaml
-yaml.schemas: {
-    "C:\\Users\\user\\Documents\\custom_schema.json": "someFilePattern.yaml",
-}
-```
-
-On Mac/Linux with full path:
-
-```yaml
-yaml.schemas: {
-    "/home/user/custom_schema.json": "someFilePattern.yaml",
-}
-```
-
-Since `0.11.0` YAML Schemas can be used for validation:
-
-```yaml
- "/home/user/custom_schema.yaml": "someFilePattern.yaml"
-```
-
-A schema can be associated with multiple globs using a json array, e.g.
-
-```yaml
-yaml.schemas: {
-    "kubernetes": ["filePattern1.yaml", "filePattern2.yaml"]
-}
-```
-
-e.g.
-
-```yaml
-"yaml.schemas": {
-    "http://json.schemastore.org/composer": ["/*"],
-    "file:///home/johnd/some-schema.json": ["some.yaml"],
-    "../relative/path/schema.json": ["/config*.yaml"],
-    "/Users/johnd/some-schema.json": ["some.yaml"],
-}
-```
-
-e.g.
-
-```yaml
-"yaml.schemas": {
-    "kubernetes": ["/myYamlFile.yaml"]
-}
-```
-
-e.g.
-
-```yaml
-"yaml.schemas": {
-    "http://json.schemastore.org/composer": ["/*"],
-    "kubernetes": ["/myYamlFile.yaml"]
-}
-```
-
-#### Multi root schema association:
-
-You can also use relative paths when working with multi root workspaces.
-
-Suppose you have a multi root workspace that is laid out like:
-
-```yaml
-My_first_project:
-   test.yaml
-   my_schema.json
-My_second_project:
-   test2.yaml
-   my_schema2.json
-```
-
-You must then associate schemas relative to the root of the multi root workspace project.
-
-```yaml
-yaml.schemas: {
-    "My_first_project/my_schema.json": "test.yaml",
-    "My_second_project/my_schema2.json": "test2.yaml"
-}
-```
-
-`yaml.schemas` allows you to specify json schemas that you want to validate against the yaml that you write. Kubernetes is an optional field. It does not require a url as the language server will provide that. You just need the keyword kubernetes and a glob pattern.
-
-### Nested Schema References
-
-Suppose a file is meant to be a component of an existing schema (like a `job.yaml` file in a circleci orb), but there isn't a standalone schema that you can reference. If there is a nested schema definition for this subcomponent, you can reference it using a url fragment, e.g.:
-
-```yaml
-yaml.schemas: {
-    "https://json.schemastore.org/circleciconfig#/definitions/jobs/additionalProperties": "/src/jobs/*.yaml",
-}
-```
-
-> **Note**
-> This will require reading your existing schema and understanding the schemastore structure a bit. (TODO: link to a documentation or blog post here?)
-
-### Using modeline
-
-You can specify a JSON Schema for a YAML file using a modeline.
-
-```yaml
-# yaml-language-server: $schema=<urlToTheSchema>
-```
-
-Also it is possible to use relative path in a modeline:
-
-```yaml
-# yaml-language-server: $schema=../relative/path/to/schema
-```
-
-or absolute path:
-
-```yaml
-# yaml-language-server: $schema=/absolute/path/to/schema
-```
-
-or IntelliJ compatible format:
-
-```yaml
-# $schema: <urlOrPathToTheSchema>
-```
-
-You can also disable schema validation entirely for a specific file using the modeline:
-
-```yaml
-# yaml-language-server: $schema=none
-```
-
-### Disabling automatic schema detection for specific files
-
-Use `yaml.disableSchemaDetection` to disable schema detection for files matching a glob pattern. For matching files, schemas from `yaml.schemas`, schema association notifications, and Schema Store are ignored. Modelines still apply.
-
-For one file pattern:
-
-```yaml
-yaml.disableSchemaDetection: "**/.github/workflows/*.yaml"
-```
-
-For multiple file patterns:
-
-```yaml
-yaml.disableSchemaDetection: ["some.yaml", "**/.github/workflows/*.yaml"]
-```
-
-
-### Schema priority
-
-The following is the priority of schema association in highest to lowest priority:
-1. Modeline
-2. CustomSchemaProvider API
-3. `yaml.disableSchemaDetection`
-4. `yaml.schemas`
-5. Schema association notification
-6. Schema Store
-
-## Containerized Language Server
-
-An image is provided for users who would like to use the YAML language server without having to install dependencies locally.
-
-The image is located at `quay.io/redhat-developer/yaml-language-server`
-
-To run the image you can use:
-
-```sh
-docker run -it quay.io/redhat-developer/yaml-language-server:latest
-```
-
-## Language Server Protocol version
-
-`yaml-language-server` use `vscode-languageserver@7.0.0` which implements [LSP 3.16](https://github.com/Microsoft/language-server-protocol/blob/gh-pages/_specifications/specification-3-16.md)
-
-## Language Server Protocol extensions
-
-### SchemaSelectionRequests
-
-#### SupportSchemaSelection Notification
-
-The support schema selection notification is sent from a client to the server to inform server that client supports JSON Schema selection.
-
-_Notification:_
-
-- method: `'yaml/supportSchemaSelection'`
-- params: `void`
-
-#### SchemaStoreInitialized Notification
-
-The schema store initialized notification is sent from the server to a client to inform client that server has finished initializing/loading schemas from schema store, and client now can ask for schemas.
-
-_Notification:_
-
-- method: `'yaml/schema/store/initialized'`
-- params: `void`
-
-#### GetAllSchemas Request
-
-The get all schemas request sent from a client to server to get all known schemas.
-
-_Request:_
-
-- method: `'yaml/get/all/jsonSchemas'`;
-- params: the document uri, server will mark used schema for document
-
-_Response:_
-
-- result: `JSONSchemaDescriptionExt[]`
-
-```typescript
-interface JSONSchemaDescriptionExt {
-  /**
-   * Schema URI
-   */
-  uri: string;
-  /**
-   * Schema name, from schema store
-   */
-  name?: string;
-  /**
-   * Schema description, from schema store
-   */
-  description?: string;
-  /**
-   * Is schema used for current document
-   */
-  usedForCurrentFile: boolean;
-  /**
-   * Is schema from schema store
-   */
-  fromStore: boolean;
-}
-```
-
-#### GetSchemas Request
-
-The request sent from a client to server to get schemas used for current document. Client can use this method to indicate in UI which schemas used for current YAML document.
-
-_Request:_
-
-- method: `'yaml/get/jsonSchema'`;
-- params: the document uri to get used schemas
-
-_Response:_
-
-- result: `JSONSchemaDescription[]`
-
-```typescript
-interface JSONSchemaDescriptionExt {
-  /**
-   * Schema URI
-   */
-  uri: string;
-  /**
-   * Schema name, from schema store
-   */
-  name?: string;
-  /**
-   * Schema description, from schema store
-   */
-  description?: string;
-}
-```
-
-## Clients
+### Existing clients
 
 This repository only contains the server implementation. Here are some known clients consuming this server:
 
 - [Eclipse Che](https://www.eclipse.org/che/)
-- [vscode-yaml](https://marketplace.visualstudio.com/items?itemName=redhat.vscode-yaml) for VSCode
+- [vscode-yaml](https://marketplace.visualstudio.com/items?itemName=redhat.vscode-yaml) for VS Code
 - [coc-yaml](https://github.com/neoclide/coc-yaml) for [coc.nvim](https://github.com/neoclide/coc.nvim)
 - [Eclipse Wild Web Developer](https://marketplace.eclipse.org/content/eclipse-wild-web-developer-web-development-eclipse-ide) for Eclipse IDE
 - [lsp-mode](https://github.com/emacs-lsp/lsp-mode) for Emacs
@@ -456,39 +350,229 @@ This repository only contains the server implementation. Here are some known cli
 - [nova-yaml](https://github.com/robb-j/nova-yaml/) for Nova
 - [volar-service-yaml](https://github.com/volarjs/services/tree/master/packages/yaml) for Volar
 - [Kate](https://kate-editor.org/)
-- [yaml-schema-lint](https://github.com/X-Guardian/yaml-schema-lint) A CLI for schema linting yaml files
+- [yaml-schema-lint](https://github.com/X-Guardian/yaml-schema-lint), a CLI for schema linting YAML files
 
-## Developer Support
+### Building a custom integration
 
-### Getting started
+To build a custom integration, run the server using one of the following options.
 
-1. Install prerequisites:
-   - latest [Visual Studio Code](https://code.visualstudio.com/)
-   - [Node.js](https://nodejs.org/) v12.0.0 or higher
-2. Fork and clone this repository
-3. Install the dependencies
-   ```bash
-   cd yaml-language-server
-   $ npm install
-   ```
-4. Build the language server
-   ```bash
-   $ npm run build
-   ```
-5. The new built server is now located in ./out/server/src/server.js.
-   ```bash
-   node (Yaml Language Server Location)/out/server/src/server.js [--stdio]
-   ```
+#### Using the npm package
 
-### Connecting to the language server via stdio
+Install yaml-language-server globally:
 
-We have included the option to connect to the language server via [stdio](https://github.com/redhat-developer/yaml-language-server/blob/681985b5a059c2cb55c8171235b07e1651b6c546/src/server.ts#L46-L51) to help with integrating the language server into different clients.
+```sh
+npm install -g yaml-language-server
+```
 
-### ESM and UMD Modules
+Start the server with the communication channel required by your client:
 
-Building the YAML Language Server produces [CommonJS](http://www.commonjs.org/) modules in the `/out/server/src` directory. In addition, a build also produces [UMD](https://github.com/umdjs/umd) (Universal Module Definition) modules and [ES Modules](https://tc39.es/ecma262/#sec-modules) (ESM) in the `/lib` directory. That gives you choices in using the YAML Language Server with different module loaders on the server side and in the browser with bundlers like webpack.
+```sh
+yaml-language-server --stdio
+yaml-language-server --socket=<port>
+yaml-language-server --node-ipc
+```
+
+#### Using a local build
+
+Clone this repository:
+
+```sh
+git clone https://github.com/redhat-developer/yaml-language-server.git
+cd yaml-language-server
+```
+
+Install dependencies and build the server:
+```bash
+npm install
+npm run build
+```
+
+The built server is located at `./out/server/src/server.js`.
+
+Run the built server with the communication channel required by your client:
+
+```sh
+node ./out/server/src/server.js --stdio
+node ./out/server/src/server.js --socket=<port>
+node ./out/server/src/server.js --node-ipc
+```
+
+#### Using the container image
+
+The container image is published at `quay.io/redhat-developer/yaml-language-server`.
+
+To run the server over stdio:
+
+```sh
+docker run -i --rm quay.io/redhat-developer/yaml-language-server:latest
+```
+
+To run the server on a socket:
+
+```sh
+docker run --rm -p <port>:<port> quay.io/redhat-developer/yaml-language-server:latest --socket=<port>
+```
+
+## LSP extensions
+
+The server uses `vscode-languageserver@^9.0.0` and implements [LSP 3.17](https://microsoft.github.io/language-server-protocol/specifications/lsp/3.17/specification/).
+
+The following non-standard LSP extensions support schema association and schema selection.
+
+### Schema association
+
+#### `json/schemaAssociations` notification
+
+Sent from the client to the server to associate schemas with YAML file patterns. This is useful when a client or editor extension owns a YAML file type and needs the server to apply a schema automatically.
+
+Each notification replaces the schema associations previously provided through this method.
+
+_Notification:_
+
+- method: `json/schemaAssociations`
+- params: `ISchemaAssociations | SchemaConfiguration[]`
+
+```typescript
+/**
+ * Maps schema URIs to file patterns.
+ */
+type ISchemaAssociations = Record<string, string[]>;
+
+interface SchemaConfiguration {
+  /**
+   * URI that identifies the schema.
+   */
+  uri: string;
+  /**
+   * File patterns associated with the schema.
+   */
+  fileMatch?: string[];
+  /**
+   * Optional inline schema content. When omitted, the server attempts to
+   * load the schema identified by `uri`.
+   */
+  schema?: JSONSchema;
+}
+```
+
+### Schema selection
+
+These extensions allow clients to discover schemas known to the server and determine which schemas apply to an open YAML document.
+
+#### `yaml/supportSchemaSelection` notification
+
+Sent from the client to the server to opt in to the schema-selection workflow.
+
+_Notification:_
+
+- method: `yaml/supportSchemaSelection`
+- params: `void`
+
+#### `yaml/schema/store/initialized` notification
+
+Sent from the server to the client after Schema Store initialization finishes. The server sends this notification only after the client has sent `yaml/supportSchemaSelection`.
+
+After receiving the notification, the client can request schema information from the server.
+
+_Notification:_
+
+- method: `yaml/schema/store/initialized`
+- params: `{}`
+
+#### `yaml/get/all/jsonSchemas` request
+
+Sent from the client to the server to retrieve all known schemas. The server uses the supplied document URI to indicate which schemas apply to that document.
+
+_Request:_
+
+- method: `yaml/get/all/jsonSchemas`
+- params: URI of an open YAML document as a `string`
+
+_Response:_
+
+- result: `JSONSchemaDescriptionExt[]`
+
+#### `yaml/get/jsonSchema` request
+
+Sent from the client to the server to retrieve the schemas that apply to an open YAML document. Clients can use this request to display the document's active schemas.
+
+_Request:_
+
+- method: `yaml/get/jsonSchema`
+- params: URI of an open YAML document as a `string`
+
+_Response:_
+
+- result: `JSONSchemaDescription[]`
+
+The schema-selection requests use the following response types:
+
+```typescript
+type SchemaVersions = { [version: string]: string };
+
+interface JSONSchemaDescription {
+  /**
+   * Schema URI.
+   */
+  uri: string;
+  /**
+   * Schema name, when available.
+   */
+  name?: string;
+  /**
+   * Schema description, when available.
+   */
+  description?: string;
+  /**
+   * Available schema versions, when provided by the schema source.
+   */
+  versions?: SchemaVersions;
+}
+
+interface JSONSchemaDescriptionExt extends JSONSchemaDescription {
+  /**
+   * Whether the schema applies to the requested document.
+   */
+  usedForCurrentFile: boolean;
+  /**
+   * Whether the schema comes from Schema Store.
+   */
+  fromStore: boolean;
+}
+```
+
+## Development
+
+### Prerequisites
+
+- [Node.js](https://nodejs.org/) v18.18.0 or higher
+- npm
+
+### Setup
+
+Fork and clone this repository, then install dependencies:
+
+```sh
+cd yaml-language-server
+npm install
+```
+
+### Build
+
+Build the language server:
+```sh
+npm run build
+```
+
+The main server output is generated in `out/server/src`.
+
+Use `npm test` to run tests.
+
+### Module Builds
+
+Building YAML Language Server produces [CommonJS](http://www.commonjs.org/) output in the `out/server/src` directory. In addition, a build also produces [UMD](https://github.com/umdjs/umd) (Universal Module Definition) modules and [ES Modules](https://tc39.es/ecma262/#sec-modules) (ESM) in the `lib` directory. These module formats support different server-side module loaders and browser bundlers such as webpack.
 
 ### CI
 
-We use a GitHub Action to publish each change in the `main` branch to [npm registry](https://www.npmjs.com/package/yaml-language-server) with the `next` tag.
-You may use the `next` version to adopt the latest changes into your project.
+GitHub Actions publish each change in the `main` branch to the [npm registry](https://www.npmjs.com/package/yaml-language-server) with the `next` tag.
+Use the `next` version to adopt the latest changes into a project.
