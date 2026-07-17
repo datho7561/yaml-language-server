@@ -209,7 +209,6 @@ export class FilePatternAssociation {
         .filter((p) => p.length > 0);
 
       this.isMatch = picomatch(processedPatterns, {
-        bash: true,
         noglobstar: false,
       });
 

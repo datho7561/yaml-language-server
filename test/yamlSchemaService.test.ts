@@ -896,5 +896,17 @@ spec:
       const nestedConfigUris = service.getSchemaURIsForResource('nested/repo/.github/ISSUE_TEMPLATE/config.yml');
       expect(nestedConfigUris).to.not.include('https://json.schemastore.org/github-issue-forms.json');
     });
+
+    it('should not match a single star across path separators', () => {
+      const service = new SchemaService.YAMLSchemaService(requestServiceMock);
+      const playbookSchemaUri = 'https://json.schemastore.org/ansible-playbook.json';
+      service.registerExternalSchema(playbookSchemaUri, ['**/playbooks/*.yml'], {});
+
+      const playbookUris = service.getSchemaURIsForResource('project/playbooks/site.yml');
+      expect(playbookUris).to.include(playbookSchemaUri);
+
+      const roleTaskUris = service.getSchemaURIsForResource('project/playbooks/roles/demo/tasks/main.yml');
+      expect(roleTaskUris).to.not.include(playbookSchemaUri);
+    });
   });
 });
