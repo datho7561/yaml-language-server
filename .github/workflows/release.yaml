@@ -29,7 +29,7 @@ jobs:
         registry-url: 'https://registry.npmjs.org'
 
     - name: Use npm 12
-      run: npm install npm@^12
+      run: npm install npm@^12 -g
 
     - name: Install dependencies
       run: npm ci
@@ -44,7 +44,9 @@ jobs:
       run: npm run check-dependencies
 
     - name: Publish Release to npm
-      run: NODE_AUTH_TOKEN="" npm publish --access public --provenance
+      run: |
+        echo "npm version $(npm -v)"
+        NODE_AUTH_TOKEN="" npm publish --access public --provenance
 
       # Get the current package.json version so we can tag the image correctly
     - name: Get current package.json version
@@ -93,7 +95,7 @@ jobs:
         registry-url: 'https://registry.npmjs.org'
 
     - name: Use npm 12
-      run: npm install npm@^12
+      run: npm install npm@^12 -g
 
     - name: Install dependencies
       run: npm ci
@@ -109,6 +111,7 @@ jobs:
     
     - name: Publish Prerelease to npm
       run: |
+        echo "npm version $(npm -v)"
         npm version prerelease --preid $(git rev-parse --short HEAD) --no-git-tag-version
         NODE_AUTH_TOKEN="" npm publish --tag next --provenance
     
